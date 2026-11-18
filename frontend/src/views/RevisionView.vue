@@ -70,7 +70,8 @@
             <DetectorTab v-else-if="tab === 'detector'" />
             <GroupsTab v-else-if="tab === 'groups'" />
             <StatesTab v-else-if="tab === 'states'" />
-            <RunsTab v-else :active-run="activeRun" @open="openRun" @started="onStarted" />
+            <RunTab v-else-if="tab === 'runs'" @started="onStarted" @sweep-started="tab = 'results'" @show-results="tab = 'results'" />
+            <ResultsTab v-else :active-run="activeRun" @open="openRun" @new-run="tab = 'runs'" />
           </KeepAlive>
         </template>
 
@@ -157,10 +158,16 @@
         />
         <LivePanel v-if="livePanelOpen && ws.ready.value && !resultsCover" :live="live" :view="view" @close="livePanelOpen = false" />
 
-        <div v-if="ws.pick.value" class="stage-hint pick-hint">
-          {{ pickHint }} <button class="link" @click="ws.pick.value = null">Done (Esc)</button>
+        <div v-if="ws.pick.value && pickInfo" class="pick-pill" role="status">
+          <span class="pp-dot" :style="{ background: pickInfo.color }" />
+          <div class="pp-text">
+            <div class="pp-title">{{ pickInfo.title }}</div>
+            <div class="pp-sub">{{ pickInfo.sub }}</div>
+            <div class="pp-live" :class="pickLive.tone">{{ pickLive.text }}</div>
+          </div>
+          <button class="btn small primary" @click="stopPick">Done <kbd>Esc</kbd></button>
         </div>
-        <div v-if="hoverText" class="legend hover-tip">{{ hoverText }}</div>
+        <div v-if="hoverText && !ws.pick.value" class="legend hover-tip">{{ hoverText }}</div>
 
         <ModelTreeOverlay
           :visible="treeShown"
@@ -205,7 +212,7 @@
         <div v-else-if="ws.meta.value?.model_ready && !viewer.modelLoaded.value" class="stage-msg"><div class="spinner small" /> {{ viewer.status.value }}</div>
         <div v-else-if="!ws.meta.value?.model_ready && !viewer.modelLoaded.value && ws.isActive.value" class="stage-msg"><div class="spinner small" /> Preparing the 3D model…</div>
 
-        <!-- results (a run opened from the Run tab) -->
+        <!-- results (a run opened from the Results tab) -->
         <!-- (kept mounted while the 3D view is shown, so Back to results finds the same tab, selection and scroll position) -->
         <section v-if="activeRun" v-show="resultsShown" class="results-pane">
           <div class="results-head">
@@ -279,7 +286,7 @@ import { useSetupScene, type FaceHighlight } from "../composables/useSetupScene"
 import { useResultsOverlay } from "../composables/useResultsOverlay";
 import { useLivePreview } from "../composables/useLivePreview";
 import { isDark, toggleTheme } from "../composables/useTheme";
-import { newId, partPattern, ruleFor, sigOf } from "../utils/setup";
+import { newId, partPattern, resolvePart, ruleFor, sigOf } from "../utils/setup";
 import { drawMap } from "../utils/drawMap";
 import { exitFrame } from "../utils/analysisText";
 import { fmtAgo } from "../utils/format";
@@ -289,7 +296,8 @@ import DetectorTab from "../components/DetectorTab.vue";
 import GroupsTab from "../components/GroupsTab.vue";
 import AnalysisDock from "../components/AnalysisDock.vue";
 import StatesTab from "../components/StatesTab.vue";
-import RunsTab from "../components/RunsTab.vue";
+import RunTab from "../components/RunTab.vue";
+import ResultsTab from "../components/ResultsTab.vue";
 import LivePanel, { type PhotorealView } from "../components/LivePanel.vue";
 import LiveViewOverlay from "../components/LiveViewOverlay.vue";
 import ResultsView from "../components/ResultsView.vue";
@@ -404,7 +412,7 @@ async function reimport() {
 }
 
 // ── tabs ────────────────────────────────────────────────────────────────────
-type TabId = "parts" | "leds" | "detector" | "groups" | "states" | "runs";
+type TabId = "parts" | "leds" | "detector" | "groups" | "states" | "runs" | "results";
 const tab = ref<TabId>("parts");
 const tabs = computed<{ id: TabId; label: string; icon: Component; count?: number }[]>(() => [
   { id: "parts", label: "Parts", icon: Boxes },
@@ -412,7 +420,8 @@ const tabs = computed<{ id: TabId; label: string; icon: Component; count?: numbe
   { id: "detector", label: "Exit", icon: Crosshair, count: ws.setup.value?.detectors.length },
   { id: "groups", label: "Groups", icon: Shapes, count: ws.setup.value?.analysisGroups?.length || undefined },
   { id: "states", label: "States", icon: SlidersHorizontal, count: ws.setup.value?.states.length },
-  { id: "runs", label: "Run", icon: Play, count: ws.runs.value.length || undefined },
+  { id: "runs", label: "Run", icon: Play },
+  { id: "results", label: "Results", icon: BarChart3, count: ws.runs.value.length || undefined },
 ]);
 
 const libraryOpen = ref(false);
@@ -561,7 +570,7 @@ watch(
     if (ws.selectedPart.value === id) return;
     ws.selectedPart.value = id;
     // picking a part in the 3D view brings up its properties (a click in the tree leaves the tab alone)
-    if (id && !fromTree && tab.value !== "parts" && tab.value !== "runs") tab.value = "parts";
+    if (id && !fromTree && tab.value !== "parts" && tab.value !== "runs" && tab.value !== "results") tab.value = "parts";
   },
 );
 watch(
@@ -740,6 +749,93 @@ const pickHint = computed(() => {
   return "";
 });
 
+/** The pill at the top of the 3D view while faces are being picked: what is picked for, and what a click does. */
+const pickInfo = computed(() => {
+  const p = ws.pick.value;
+  const s = ws.setup.value;
+  if (!p) return null;
+  const toggle = "Click a face to add it, click it again to remove it";
+  if (p.kind === "group") {
+    const g = s?.analysisGroups?.find((x) => x.id === p.groupId);
+    const color = g?.color || ws.check.value?.groups?.find((x) => x.id === p.groupId)?.color || "#8b5cf6";
+    return { title: `Picking faces for ${g?.name || "this group"}`, sub: toggle, color };
+  }
+  if (p.kind === "detector") {
+    const d = s?.detectors.find((x) => x.id === p.detectorId);
+    return { title: `Picking the exit faces of ${d?.name || "this detector"}`, sub: `${toggle}. Rays leaving through them are measured`, color: "#06b6d4" };
+  }
+  if (p.kind === "led") return { title: p.ledId === "__new__" ? "Picking the emitting face of each LED" : "Picking the emitting face of this LED", sub: "Click the face the LED shines out of", color: "#f97316" };
+  if (p.kind === "override") {
+    const inst = ws.parts.value.find((x) => x.id === p.instanceId);
+    return { title: `Picking faces of ${inst?.name || "the part"} with their own finish`, sub: toggle, color: "#a855f7" };
+  }
+  return { title: "Picking faces", sub: pickHint.value, color: "#8b5cf6" };
+});
+/** What the last click did (shown for a moment in the pill) and what the next one would do. */
+const pickNote = ref<{ text: string; tone: "add" | "remove" | "warn" } | null>(null);
+let pickNoteTimer: number | undefined;
+function flashPick(text: string, tone: "add" | "remove" | "warn") {
+  pickNote.value = { text, tone };
+  window.clearTimeout(pickNoteTimer);
+  pickNoteTimer = window.setTimeout(() => (pickNote.value = null), tone === "warn" ? 3500 : 1600);
+}
+/** `add` / `remove` when the face under the cursor would be added to / removed from the list being picked into. */
+const hoverAction = ref<"add" | "remove" | "">("");
+const pickLive = computed(() => {
+  if (pickNote.value) return pickNote.value;
+  if (!hoverText.value) return { text: "Hover a face to see what a click does", tone: "" as const };
+  const verb = hoverAction.value === "add" ? " · click to add" : hoverAction.value === "remove" ? " · click to remove" : "";
+  return { text: hoverText.value + verb, tone: hoverAction.value };
+});
+function stopPick() {
+  ws.pick.value = null;
+}
+/** The face list (group or detector) that faces are being picked into, or null for the other kinds of picking. */
+function pickList(s: NonNullable<typeof ws.setup.value>, pick: NonNullable<typeof ws.pick.value>) {
+  if (pick.kind === "group") return s.analysisGroups?.find((g) => g.id === pick.groupId)?.faces ?? null;
+  if (pick.kind === "detector") return s.detectors.find((d) => d.id === pick.detectorId)?.faces ?? null;
+  return null;
+}
+/** Add the clicked face to the group / detector (or take it out when it is already there). The list changes at once; the signature is stored a moment later. */
+function togglePickedFace(pick: NonNullable<typeof ws.pick.value>, instId: string, face: number) {
+  const s = ws.setup.value;
+  const inst = ws.parts.value.find((p) => p.id === instId);
+  if (!s || !inst) return;
+  const label = `face ${face} · ${inst.name}`;
+  if (!resolvePart(inst, s.parts).enabled) {
+    flashPick(`${inst.name} is ignored by the simulation. Enable it in the Parts tab first.`, "warn");
+    return;
+  }
+  const pattern = partPattern(inst, ws.parts.value);
+  let result = null as "added" | "removed" | null;
+  ws.mutate((st) => {
+    const list = pickList(st, pick);
+    if (!list) return;
+    const at = list.findIndex((f) => f.part === pattern && f.face === face);
+    if (at >= 0) {
+      list.splice(at, 1);
+      result = "removed";
+    } else {
+      list.push({ part: pattern, face, sig: null });
+      result = "added";
+    }
+  });
+  if (!result) return;
+  flashPick(result === "added" ? `Added ${label}` : `Removed ${label}`, result === "added" ? "add" : "remove");
+  applyHover(instId, face); // the cursor is still on that face: it now offers the opposite action
+  if (result === "added") {
+    api
+      .face(props.id, instId, face)
+      .then((info) =>
+        ws.mutate((st) => {
+          const entry = pickList(st, pick)?.find((f) => f.part === pattern && f.face === face);
+          if (entry && !entry.sig) entry.sig = sigOf(info);
+        }),
+      )
+      .catch(() => undefined); // without a signature the face index is trusted as it is
+  }
+}
+
 /**
  * Plain clicks (select a part, click empty space to deselect) are handled by the viewer; this only handles the
  * clicks that pick faces. The viewer marks a click as consumed after an orbit / pan drag or a drag of the
@@ -770,6 +866,11 @@ async function onClick(e: MouseEvent) {
   if (!hit) return;
   const inst = ws.parts.value.find((p) => p.id === hit.instanceId);
   if (!inst) return;
+  // group and detector faces: the list changes (and the face is painted) right away, without waiting for the server
+  if (pick.kind === "group" || pick.kind === "detector") {
+    togglePickedFace(pick, hit.instanceId, hit.face);
+    return;
+  }
   const pattern = partPattern(inst, ws.parts.value);
   let sig;
   try {
@@ -790,14 +891,6 @@ async function onClick(e: MouseEvent) {
       }
     });
     if (pick.ledId !== "__new__") ws.pick.value = null;
-  } else if (pick.kind === "detector") {
-    ws.mutate((s) => {
-      const det = s.detectors.find((d) => d.id === pick.detectorId);
-      if (!det) return;
-      const at = det.faces.findIndex((f) => f.part === pattern && f.face === hit.face);
-      if (at >= 0) det.faces.splice(at, 1);
-      else det.faces.push({ part: pattern, face: hit.face, sig });
-    });
   } else if (pick.kind === "override") {
     if (hit.instanceId !== pick.instanceId) {
       ws.selectedPart.value = hit.instanceId;
@@ -816,14 +909,6 @@ async function onClick(e: MouseEvent) {
       }
       rule.faces = faces;
     });
-  } else if (pick.kind === "group") {
-    ws.mutate((s) => {
-      const grp = s.analysisGroups?.find((g) => g.id === pick.groupId);
-      if (!grp) return;
-      const at = grp.faces.findIndex((f) => f.part === pattern && f.face === hit.face);
-      if (at >= 0) grp.faces.splice(at, 1);
-      else grp.faces.push({ part: pattern, face: hit.face, sig });
-    });
   }
 }
 
@@ -835,11 +920,13 @@ function onPointerMove(e: PointerEvent) {
     hoverSeq++;
     if (sceneCtl.hover.value) sceneCtl.setHover(null);
     hoverText.value = "";
+    hoverAction.value = "";
     return;
   }
   if (!pick || !viewer.modelLoaded.value) {
     sceneCtl.setHover(null);
     hoverText.value = "";
+    hoverAction.value = "";
     return;
   }
   const seq = ++hoverSeq;
@@ -849,13 +936,29 @@ function onPointerMove(e: PointerEvent) {
     if (!hit) {
       sceneCtl.setHover(null);
       hoverText.value = "";
+      hoverAction.value = "";
       return;
     }
-    const color = pick.kind === "led" ? 0xf97316 : pick.kind === "detector" || pick.kind === "inspect" ? 0x06b6d4 : pick.kind === "group" ? hexToNumber(ws.setup.value?.analysisGroups?.find((g) => g.id === pick.groupId)?.color) : 0xa855f7;
-    sceneCtl.setHover({ key: "hover", instanceId: hit.instanceId, face: hit.face, color, opacity: 0.55 });
-    const inst = ws.parts.value.find((p) => p.id === hit.instanceId);
-    hoverText.value = `${inst?.name ?? hit.instanceId} · face ${hit.face}`;
+    applyHover(hit.instanceId, hit.face);
   });
+}
+/** Tint the face under the cursor: the pick colour to add it, red when a click would take it out of the group / detector. */
+function applyHover(instanceId: string, face: number) {
+  const pick = ws.pick.value ?? (av.inspecting.value && activeRun.value ? ({ kind: "inspect" } as const) : null);
+  if (!pick) return;
+  const inst = ws.parts.value.find((p) => p.id === instanceId);
+  let color = pick.kind === "led" ? 0xf97316 : pick.kind === "detector" || pick.kind === "inspect" ? 0x06b6d4 : pick.kind === "group" ? hexToNumber(ws.setup.value?.analysisGroups?.find((g) => g.id === pick.groupId)?.color) : 0xa855f7;
+  let action: "add" | "remove" | "" = "";
+  const s = ws.setup.value;
+  if (inst && s && (pick.kind === "group" || pick.kind === "detector")) {
+    const pattern = partPattern(inst, ws.parts.value);
+    const inList = !!pickList(s, pick)?.some((f) => f.part === pattern && f.face === face);
+    action = inList ? "remove" : "add";
+    if (inList) color = 0xef4444;
+  }
+  hoverAction.value = action;
+  sceneCtl.setHover({ key: "hover", instanceId, face, color, opacity: 0.6 });
+  hoverText.value = `${inst?.name ?? instanceId} · face ${face}`;
 }
 
 function onKey(e: KeyboardEvent) {
@@ -876,6 +979,8 @@ watch(
     if (!p) {
       sceneCtl.setHover(null);
       hoverText.value = "";
+      hoverAction.value = "";
+      pickNote.value = null;
     }
     if (p?.kind === "override") ws.selectedPart.value = p.instanceId;
   },
@@ -894,7 +999,7 @@ function openRun(rid: string) {
 }
 function onStarted(rid: string) {
   pendingRun.value = rid;
-  tab.value = "runs";
+  tab.value = "results"; // the new run shows its progress in the list of runs, and opens when it is done
 }
 watch(
   () => ws.runs.value.map((r) => `${r.id}:${r.status}`).join("|"),

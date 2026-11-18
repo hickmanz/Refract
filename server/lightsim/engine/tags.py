@@ -78,6 +78,7 @@ def build_tags(
     tri_group = np.full(ntri, -1, dtype=np.int32)
     groups: list[dict] = []
     user = [g for g in (setup.get("analysisGroups") or []) if isinstance(g, dict)]
+    issues: list[dict] = []  # face selections of the groups that no longer resolve (the faces are not in this model)
 
     def add_group(gid: str, name: str, color: str | None, tris: np.ndarray, faces: list[dict], auto: bool) -> None:
         idx = len(groups) if len(groups) < NAMED else OTHER
@@ -106,17 +107,18 @@ def build_tags(
             name = str(gdoc.get("name") or f"Group {gi + 1}")
             sel_tris: list[np.ndarray] = []
             faces_meta: list[dict] = []
+            missing: list[dict] = []
             for sel in gdoc.get("faces", []):
                 matched = [i for i in insts if name_matches(sel.get("part", ""), i) and i["ordinal"] in instance_to_body]
                 if not matched:
-                    warnings.append(f"Analysis group {name}: no enabled part matches {sel.get('part')!r}.")
+                    missing.append({"part": sel.get("part"), "face": sel.get("face"), "reason": "part"})
                 for inst in matched:
                     t0, tn = inst["triOffset"], inst["triCount"]
                     sc = opt_to_scene[t0 : t0 + tn]
                     if sel.get("face") is not None:
                         fidx = faceref.resolve_face(opt, inst, int(sel["face"]), sel.get("sig"), diag, f"Analysis group {name}", warnings)
                         if fidx is None:
-                            warnings.append(f"Analysis group {name}: face {sel['face']} of {inst['path']} no longer exists.")
+                            missing.append({"part": sel.get("part"), "face": int(sel["face"]), "reason": "face"})
                             continue
                         m = opt["tri_face"][t0 : t0 + tn] == fidx
                         faces_meta.append(_face_entry(inst, fidx))
@@ -124,6 +126,10 @@ def build_tags(
                         m = np.ones(tn, bool)
                         faces_meta.append(_face_entry(inst, None))
                     sel_tris.append(sc[m])
+            if missing:
+                missing = [dict(t) for t in {tuple(sorted(m.items(), key=lambda kv: kv[0])) for m in missing}]  # one entry per selection
+                missing.sort(key=lambda m: (str(m["part"]), -1 if m["face"] is None else m["face"]))
+                issues.append({"id": str(gdoc.get("id") or f"g{gi}"), "name": name, "missing": missing})
             if sel_tris:
                 add_group(str(gdoc.get("id") or f"g{gi}"), name, gdoc.get("color"), np.unique(np.concatenate(sel_tris)), faces_meta, False)
     if not groups:
@@ -151,7 +157,11 @@ def build_tags(
     tri_tface = np.full(ntri, -1, dtype=np.int32)
     sel = tri_group >= 0
     tri_tface[sel] = np.searchsorted(tagged, tri_gface[sel]).astype(np.int32)
+    n_missing = sum(len(i["missing"]) for i in issues)
+    if n_missing:
+        warnings.append(f"{n_missing} face selection{'s' if n_missing != 1 else ''} in analysis groups no longer exist in this model (see the Groups tab).")
     return {
+        "issues": issues,
         "tri_gface": tri_gface, "tri_group": tri_group, "tri_tface": tri_tface, "groups": groups,
         "gface_body": gface_body, "gface_face": gface_face, "tface_gface": tagged.astype(np.int32),
     }

@@ -72,6 +72,21 @@ def test_check_setup(client, project):
         assert len(ch["ex"]) == 3 and len(ch["ey"]) == 3
 
 
+def test_check_reports_missing_group_faces(client, project):
+    setup = client.get(f"/api/projects/{project['pid']}/setup").json()
+    parts = client.get(f"/api/revisions/{project['a']}/parts").json()["instances"]
+    real = parts[0]["name"]
+    setup["analysisGroups"] = [
+        {"id": "g1", "name": "Gone", "faces": [{"part": real, "face": 99999}, {"part": "NoSuchPart", "face": 3}]},
+    ]
+    doc = client.post(f"/api/revisions/{project['a']}/check", json=setup).json()
+    issues = {i["id"]: i["missing"] for i in doc["groupIssues"]}
+    assert {m["reason"] for m in issues["g1"]} <= {"face", "part"}
+    assert any(m["part"] == "NoSuchPart" and m["reason"] == "part" for m in issues["g1"])
+    assert len(issues["g1"]) == 2
+    assert sum("no longer exist" in w for w in doc["warnings"]) == 1
+
+
 def test_run_results_and_energy(client, project):
     runid = _run(client, project["a"])
     res = client.get(f"/api/runs/{runid}/results").json()

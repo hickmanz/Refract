@@ -234,7 +234,7 @@ export function useLivePreview(ws: Workspace) {
     try {
       const kept = await api.keepLive(r.id);
       await ws.loadRuns();
-      notice.value = `Saved as “${kept.name}” in the Run tab. Moving a slider starts a new preview.`;
+      notice.value = `Saved as “${kept.name}” in the Results tab. Moving a slider starts a new preview.`;
       window.clearTimeout(pollTimer);
       generation++;
       run.value = null;

@@ -552,6 +552,7 @@ def _preflight(rid: str, setup: dict, library: dict) -> dict:
             }
             for g in scene.groups
         ],
+        "groupIssues": scene.group_issues,
     }
 
 

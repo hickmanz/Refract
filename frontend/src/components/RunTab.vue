@@ -1,5 +1,18 @@
 <template>
   <div class="tab-body">
+    <div v-if="active.length" class="notice info">
+      <Loader2 :size="15" class="spin" />
+      <div class="active-run">
+        <span>
+          <template v-if="active.length === 1">
+            <strong>{{ active[0].name }}</strong> is {{ active[0].status === "queued" ? "queued" : "running" }}, {{ Math.round(active[0].progress.fraction * 100) }} %.
+          </template>
+          <template v-else>{{ active.length }} runs are in progress, {{ Math.round(overall * 100) }} % overall.</template>
+        </span>
+        <button class="btn small" @click="emit('showResults')"><BarChart3 :size="14" /> See progress in Results</button>
+      </div>
+    </div>
+
     <section class="run-box">
       <h4>Simulate this revision</h4>
       <div v-if="ws.checkError.value" class="notice warn"><AlertTriangle :size="15" /><span>{{ ws.checkError.value }}</span></div>
@@ -53,53 +66,25 @@
       <p v-if="error" class="error small">{{ error }}</p>
     </section>
 
-    <section class="run-box">
-      <h4>Runs of this revision</h4>
-      <p v-if="!plainRuns.length" class="muted small">No runs yet.</p>
-      <ul class="run-list">
-        <li v-for="r in plainRuns" :key="r.id" class="run-item" :class="{ selected: r.id === activeRun }" @click="r.status === 'ready' && $emit('open', r.id)">
-          <div class="run-head">
-            <span class="run-name">{{ r.name }}</span>
-            <span class="chip" :class="r.status">{{ statusText[r.status] }}</span>
-            <button v-if="r.status === 'queued' || r.status === 'running'" class="icon-btn" title="Cancel" @click.stop="cancel(r)"><X :size="14" /></button>
-            <template v-else>
-              <button class="icon-btn" title="Rename" @click.stop="rename(r)"><Pencil :size="13" /></button>
-              <button class="icon-btn" title="Delete run" @click.stop="remove(r)"><Trash2 :size="14" /></button>
-            </template>
-          </div>
-          <div v-if="r.status === 'running' || r.status === 'queued'" class="progress thin"><div class="progress-bar" :style="{ width: Math.round(r.progress.fraction * 100) + '%' }" /></div>
-          <div v-if="r.status === 'running'" class="muted small">{{ r.progress.phase }}</div>
-          <div v-else-if="r.status === 'failed'" class="error small">{{ r.error }}</div>
-          <div v-else-if="r.status === 'ready' && r.summary?.states?.length" class="muted small">
-            {{ fmtAgo(r.created) }} · <template v-if="r.solver === 'gpu'"><span :title="r.solverName">GPU</span> ·</template><template v-if="r.settings.one_channel_per_led">quick look (1 channel/LED) ·</template> {{ (r.raysTraced ?? r.settings.rays).toLocaleString() }} rays ·
-            <template v-if="r.mapNoise != null">noise {{ (r.mapNoise * 100).toFixed(1) }} % ·</template>
-            efficiency {{ fmtPct(r.summary.states[0].detectors[0]?.efficiency) }} ·
-            {{ r.timing?.seconds }} s
-          </div>
-          <div v-else class="muted small">{{ fmtAgo(r.created) }}</div>
-        </li>
-      </ul>
-    </section>
-
-    <SweepPanel @open="(id) => emit('open', id)" />
+    <SweepPanel mode="form" @started="emit('sweepStarted')" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { AlertTriangle, Pencil, Play, Trash2, X } from "lucide-vue-next";
-import { api, type RunMeta } from "../api";
+import { AlertTriangle, BarChart3, Loader2, Play } from "lucide-vue-next";
+import { api } from "../api";
 import { useWorkspace } from "../composables/useWorkspace";
-import { fmtPct } from "../utils/colormap";
-import { fmtAgo } from "../utils/format";
 import CheckWarnings from "./CheckWarnings.vue";
 import SweepPanel from "./SweepPanel.vue";
 import { useSolvers } from "../composables/useSolvers";
 
-defineProps<{ activeRun: string | null }>();
-const emit = defineEmits<{ open: [id: string]; started: [id: string] }>();
+const emit = defineEmits<{ started: [id: string]; sweepStarted: []; showResults: [] }>();
 
 const ws = useWorkspace();
+/** Runs (and the runs of a sweep) that are queued or running right now. */
+const active = computed(() => ws.runs.value.filter((r) => r.status === "queued" || r.status === "running"));
+const overall = computed(() => active.value.reduce((s, r) => s + r.progress.fraction, 0) / Math.max(active.value.length, 1));
 const { gpu, chosen, solver } = useSolvers();
 const rays = ref(200000);
 const rayOptions = [50000, 200000, 500000, 1000000, 2000000, 5000000, 10000000, 20000000, 50000000];
@@ -113,9 +98,6 @@ const oneChannel = ref(false);
 const name = ref("");
 const busy = ref(false);
 const error = ref("");
-const statusText: Record<string, string> = { queued: "Queued", running: "Running", ready: "Done", failed: "Failed", cancelled: "Cancelled" };
-
-const plainRuns = computed(() => ws.runs.value.filter((r) => !r.sweep));
 const channelCount = computed(() => {
   const ch = ws.check.value?.channels ?? [];
   return oneChannel.value ? new Set(ch.map((c) => c.led)).size : ch.length; // upper bound: channels that no state drives are skipped anyway
@@ -140,20 +122,9 @@ async function start() {
     busy.value = false;
   }
 }
-async function cancel(r: RunMeta) {
-  await api.cancelRun(r.id);
-  await ws.loadRuns();
-}
-async function rename(r: RunMeta) {
-  const n = window.prompt("Rename run", r.name);
-  if (n && n.trim()) {
-    await api.renameRun(r.id, n.trim());
-    await ws.loadRuns();
-  }
-}
-async function remove(r: RunMeta) {
-  if (!confirm(`Delete run "${r.name}" and its results?`)) return;
-  await api.deleteRun(r.id);
-  await ws.loadRuns();
-}
 </script>
+
+<style scoped>
+.active-run { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+.spin { animation: spin 1s linear infinite; }
+</style>

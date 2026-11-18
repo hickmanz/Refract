@@ -223,6 +223,13 @@ export interface CheckResult {
   resolved: { detectors: Record<string, { instance: string; face: number }[]>; leds: Record<string, { instance: string; face: number }> };
   /** The analysis groups as the simulation sees them (the automatic ones when none are defined). */
   groups?: { index: number; id: string; name: string; color: string; auto: boolean; areaMm2: number; faces: { instance: string; face: number | null }[] }[];
+  /** Face selections of the analysis groups that do not exist in this model (the part or the face is gone). */
+  groupIssues?: GroupIssue[];
+}
+export interface GroupIssue {
+  id: string;
+  name: string;
+  missing: { part: string; face: number | null; reason: "face" | "part" }[];
 }
 
 export interface RunSettings {

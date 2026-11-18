@@ -572,6 +572,9 @@ export function useThreeViewer(
 
   // Left-click orbit drag tracking (suppresses click-to-select after orbit)
   let orbitDragged = false;
+  let orbitStartX = 0;
+  let orbitStartY = 0;
+  const ORBIT_CLICK_SLOP_PX = 4;
 
   // Right-click drag tracking (suppresses context menu after pan)
   let rightPointerDown = false;
@@ -1048,6 +1051,8 @@ export function useThreeViewer(
         // Left-click reserved for gizmo
       } else {
         controls.value.startRotate(event.clientX, event.clientY);
+        orbitStartX = event.clientX;
+        orbitStartY = event.clientY;
       }
     }
     // Right click → pan + drag detection for context menu suppression
@@ -1085,7 +1090,10 @@ export function useThreeViewer(
     // Orbit rotation — delay during middle-click until the pivot is committed
     if (controls.value && (!middlePointerDown || middlePivotSet)) {
       if (controls.value.rotateByPointer(event.clientX, event.clientY)) {
-        orbitDragged = true;
+        // a hand wobble of a pixel or two while clicking is still a click (it must not swallow a face pick)
+        const dx = event.clientX - orbitStartX;
+        const dy = event.clientY - orbitStartY;
+        if (dx * dx + dy * dy >= ORBIT_CLICK_SLOP_PX * ORBIT_CLICK_SLOP_PX) orbitDragged = true;
       }
     }
 

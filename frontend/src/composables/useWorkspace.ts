@@ -1,8 +1,8 @@
 // Everything the revision page shares between its panels: the revision, its parts, the project setup (auto-saved),
 // the library, the server's validation of the setup and the simulation runs.
 import { computed, inject, onBeforeUnmount, provide, ref, shallowRef, watch, type InjectionKey, type Ref } from "vue";
-import { api, type CheckResult, type Library, type PartDoc, type PartsDoc, type Project, type RevisionMeta, type RunMeta, type Setup } from "../api";
-import { emptySetup } from "../utils/setup";
+import { api, type CheckResult, type GroupIssue, type Library, type PartDoc, type PartsDoc, type Project, type RevisionMeta, type RunMeta, type Setup } from "../api";
+import { emptySetup, instanceForPattern } from "../utils/setup";
 import type { FaceHighlight } from "./useSetupScene";
 
 export type PickMode =
@@ -112,7 +112,7 @@ export function createWorkspace(rid: Ref<string>) {
       if (loadingSetup || !setup.value) return;
       window.clearTimeout(saveTimer);
       saveTimer = window.setTimeout(saveNow, 500);
-      scheduleCheck(900);
+      scheduleCheck(pick.value ? 200 : 900); // faster while faces are being picked
     },
     { deep: true },
   );
@@ -179,6 +179,35 @@ export function createWorkspace(rid: Ref<string>) {
     if (runs.value.some((r) => r.status === "queued" || r.status === "running")) runTimer = window.setTimeout(loadRuns, 800);
   }
 
+  // ── group faces that do not exist in this model (reported by the server's check) ──────
+  type FaceSel = { part: string; face: number | null };
+  const sameSel = (a: FaceSel, b: { part: string; face: number | null }) => a.part === b.part && (a.face ?? null) === (b.face ?? null);
+  /** The missing selections of a group that are still in the setup (an edit since the last check is taken into account). */
+  function issuesFor(groupId: string): GroupIssue["missing"] {
+    const issue = check.value?.groupIssues?.find((i) => i.id === groupId);
+    const def = setup.value?.analysisGroups?.find((g) => g.id === groupId);
+    if (!issue || !def) return [];
+    return issue.missing.filter((m) => def.faces.some((f) => sameSel(f, m)));
+  }
+  const isMissing = (groupId: string, f: FaceSel) => issuesFor(groupId).some((m) => sameSel(f, m));
+  /** Groups that have missing faces, and how many selections are missing in total. */
+  const groupsWithIssues = computed(() => (setup.value?.analysisGroups ?? []).filter((g) => issuesFor(g.id).length));
+  const missingCount = computed(() => groupsWithIssues.value.reduce((n, g) => n + issuesFor(g.id).length, 0));
+  /** Take every missing face selection out of the groups; returns how many were removed. */
+  function removeMissingFaces(): number {
+    let removed = 0;
+    mutate((s) => {
+      for (const g of s.analysisGroups ?? []) {
+        const miss = issuesFor(g.id);
+        if (!miss.length) continue;
+        const before = g.faces.length;
+        g.faces = g.faces.filter((f) => !miss.some((m) => sameSel(f, m)));
+        removed += before - g.faces.length;
+      }
+    });
+    return removed;
+  }
+
   // ── 3D highlights derived from the (server-resolved) setup ───────────────────────
   const highlights = computed<FaceHighlight[]>(() => {
     const out: FaceHighlight[] = [];
@@ -194,8 +223,18 @@ export function createWorkspace(rid: Ref<string>) {
       if (f) out.push({ key: `led:${led.id}`, instanceId: f.instance, face: f.face, color: 0xf97316, opacity: 0.85 });
     }
     if (showGroups.value) {
+      // the group that faces are being picked into is painted from the setup itself, so a click shows at once (the server check follows later)
+      const picked = pick.value?.kind === "group" ? pick.value.groupId : null;
+      const pickedDef = picked ? s.analysisGroups?.find((g) => g.id === picked) : undefined;
+      if (pickedDef) {
+        const color = hexToNumber(pickedDef.color || check.value?.groups?.find((g) => g.id === picked)?.color);
+        pickedDef.faces.forEach((f, i) => {
+          if (f.face === null || f.face === undefined || isMissing(pickedDef.id, f)) return;
+          for (const inst of instanceForPattern(f.part, parts.value)) out.push({ key: `grp:${picked}:${i}:${inst.id}`, instanceId: inst.id, face: f.face, color, opacity: 0.85 });
+        });
+      }
       for (const g of check.value?.groups ?? []) {
-        if (g.index >= 62) continue; // "other tagged faces"
+        if (g.index >= 62 || g.id === picked) continue; // "other tagged faces"
         const color = hexToNumber(g.color);
         const focus = focusGroup.value === g.id;
         g.faces.forEach((f, i) => {
@@ -262,6 +301,11 @@ export function createWorkspace(rid: Ref<string>) {
     variant,
     reconcile,
     acceptFaceMatches,
+    issuesFor,
+    isMissing,
+    groupsWithIssues,
+    missingCount,
+    removeMissingFaces,
     highlights,
     start,
     schedulePoll,

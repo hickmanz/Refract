@@ -320,7 +320,7 @@ export function useSetupScene(
 
   function setHover(h: FaceHighlight | null) {
     const prev = hover.value;
-    if (prev?.instanceId === h?.instanceId && prev?.face === h?.face) return;
+    if (prev?.instanceId === h?.instanceId && prev?.face === h?.face && prev?.color === h?.color) return;
     hover.value = h;
     rebuildOverlay();
   }

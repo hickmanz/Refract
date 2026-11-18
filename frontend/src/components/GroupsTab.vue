@@ -6,6 +6,16 @@
       Faces that are not in a group are not analysed. Changes apply to the next run.
     </p>
     <CheckWarnings rematch-only />
+    <div v-if="ws.missingCount.value" class="notice warn">
+      <AlertTriangle :size="15" />
+      <div class="missing-banner">
+        <span>
+          {{ ws.missingCount.value }} face selection{{ ws.missingCount.value === 1 ? " is" : "s are" }} missing from the model, in
+          {{ ws.groupsWithIssues.value.length }} group{{ ws.groupsWithIssues.value.length === 1 ? "" : "s" }}. They are marked below.
+        </span>
+        <button class="btn small" :disabled="ws.checking.value" @click="removeMissing"><Trash2 :size="14" /> Remove all missing faces from groups</button>
+      </div>
+    </div>
     <div class="notice info">
       <Info :size="15" />
       <span v-if="!groups.length">
@@ -20,6 +30,7 @@
         <div class="led-head">
           <input class="color-swatch" type="color" :value="colorOf(g)" title="Colour of this group" @input="g.color = ($event.target as HTMLInputElement).value" />
           <input v-model="g.name" class="text-input name" placeholder="Name of this surface" />
+          <span v-if="issueCount(g)" class="issue-icon" :title="issueTitle(g)" role="img" :aria-label="issueTitle(g)"><AlertTriangle :size="15" /></span>
           <button class="icon-btn" title="Remove this group" @click="remove(g.id)"><Trash2 :size="14" /></button>
         </div>
         <button
@@ -31,21 +42,25 @@
         >
           <ChevronRight :size="14" class="chev" :class="{ open: isOpen(g) }" />
           <span class="small">{{ g.faces.length }} face{{ g.faces.length === 1 ? "" : "s" }}</span>
+          <span v-if="issueCount(g)" class="missing-count small"><AlertTriangle :size="12" /> {{ issueCount(g) }} missing</span>
           <span v-if="!isOpen(g)" class="muted small summary">{{ summary(g) }}</span>
         </button>
         <ul v-if="g.faces.length && isOpen(g)" class="face-list">
-          <li v-for="(f, i) in g.faces" :key="i">
-            <span class="small">{{ f.part }}{{ f.face === null ? " · whole part" : ` · face ${f.face}` }}</span>
+          <li v-for="(f, i) in g.faces" :key="i" :class="{ missing: ws.isMissing(g.id, f) }">
+            <span class="small face-label">
+              <AlertTriangle v-if="ws.isMissing(g.id, f)" :size="13" class="issue-icon" />
+              {{ f.part }}{{ f.face === null ? " · whole part" : ` · face ${f.face}` }}
+              <em v-if="ws.isMissing(g.id, f)">{{ missingWhy(g, f) }}</em>
+            </span>
             <button class="icon-btn" title="Remove this face" @click="g.faces.splice(i, 1)"><X :size="13" /></button>
           </li>
         </ul>
         <p v-else-if="!g.faces.length" class="muted small">No faces yet.</p>
         <div class="tab-actions">
-          <button class="btn small" :class="{ on: picking(g.id) }" @click="togglePick(g.id)">
-            <MousePointerClick :size="14" /> {{ picking(g.id) ? "Click faces in 3D…" : "Add faces" }}
-          </button>
+          <PickButton :active="picking(g.id)" label="Add faces in 3D" @click="togglePick(g.id)" />
           <span v-if="info(g.id)" class="muted small">{{ info(g.id)!.areaMm2.toFixed(1) }} mm²</span>
-          <span v-else-if="g.faces.length" class="muted small">checking…</span>
+          <span v-else-if="g.faces.length && issueCount(g) < g.faces.length" class="muted small">checking…</span>
+          <span v-else-if="g.faces.length" class="muted small">no faces left in this model</span>
         </div>
       </li>
     </ul>
@@ -65,10 +80,11 @@
 
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from "vue";
-import { ChevronRight, ChevronsUpDown, Info, Layers, MousePointerClick, Plus, Trash2, X } from "lucide-vue-next";
+import { AlertTriangle, ChevronRight, ChevronsUpDown, Info, Layers, Plus, Trash2, X } from "lucide-vue-next";
 import { api, type AnalysisGroupDef } from "../api";
 import { useWorkspace } from "../composables/useWorkspace";
 import CheckWarnings from "./CheckWarnings.vue";
+import PickButton from "./PickButton.vue";
 import { newId, partPattern, sigOf } from "../utils/setup";
 
 const MAX_AUTO = 62;
@@ -93,6 +109,19 @@ const summary = (g: AnalysisGroupDef) => {
 const toggleOpen = (g: AnalysisGroupDef) => (open[g.id] = !isOpen(g));
 const allOpen = computed(() => groups.value.filter((g) => g.faces.length).every((g) => isOpen(g)));
 const setAll = (on: boolean) => groups.value.forEach((g) => (open[g.id] = on));
+
+// faces that a group points to but the model does not have (typically after importing a new STEP variant)
+const issueCount = (g: AnalysisGroupDef) => ws.issuesFor(g.id).length;
+const issueTitle = (g: AnalysisGroupDef) => {
+  const n = issueCount(g);
+  return `${n} face${n === 1 ? "" : "s"} of this group ${n === 1 ? "is" : "are"} missing from the model`;
+};
+const missingWhy = (g: AnalysisGroupDef, f: AnalysisGroupDef["faces"][number]) =>
+  ws.issuesFor(g.id).find((m) => m.part === f.part && (m.face ?? null) === (f.face ?? null))?.reason === "part" ? "part is missing" : "missing";
+function removeMissing() {
+  const n = ws.removeMissingFaces();
+  message.value = n ? `Removed ${n} missing face selection${n === 1 ? "" : "s"} from the groups.` : "";
+}
 
 const colorOf = (g: AnalysisGroupDef) => g.color || info(g.id)?.color || "#8b5cf6";
 const picking = (id: string) => ws.pick.value?.kind === "group" && ws.pick.value.groupId === id;
@@ -156,5 +185,14 @@ async function perFace() {
 <style scoped>
 .group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .det-item.focus { border-color: var(--accent-8); }
+.missing-banner { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; }
+.issue-icon { display: inline-flex; align-items: center; flex: none; color: var(--radix-yellow-9, #ca8a04); }
+.dark .issue-icon { color: var(--radix-yellow-11, #facc15); }
+.missing-count { display: inline-flex; align-items: center; gap: 3px; color: var(--radix-yellow-9, #ca8a04); }
+.dark .missing-count { color: var(--radix-yellow-11, #facc15); }
+.face-list li.missing { background: var(--radix-yellow-2, var(--neutral-2)); }
+.face-label { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.face-list li.missing .face-label { text-decoration: line-through; text-decoration-color: var(--neutral-8); }
+.face-list li.missing .face-label em { font-style: normal; text-decoration: none; display: inline-block; color: var(--radix-yellow-9, #ca8a04); }
 .color-swatch { width: 28px; height: 24px; padding: 0; border: 1px solid var(--neutral-4); border-radius: 4px; background: none; flex: none; }
 </style>

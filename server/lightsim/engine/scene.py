@@ -139,6 +139,7 @@ class Scene:
     tri_group: np.ndarray | None = None
     tri_tface: np.ndarray | None = None
     groups: list = field(default_factory=list)
+    group_issues: list = field(default_factory=list)  # face selections of the analysis groups that do not resolve in this model
     gface_body: np.ndarray | None = None
     gface_face: np.ndarray | None = None
     tface_gface: np.ndarray | None = None
@@ -480,7 +481,7 @@ def build_scene(opt: dict[str, np.ndarray], opt_doc: dict, setup: dict, library:
         det_nuv=det_nuv, det_off=det_off, det_cos=det_cos, det_mode=det_mode, tri_uv=tri_uv_all, total_pix=max(offset, 1),
         eps=eps, diag=diag, instance_to_body=instance_to_body, tri_opt_index=tri_opt_index, warnings=warnings,
         resolved=face_refs,
-        tri_gface=tg["tri_gface"], tri_group=tg["tri_group"], tri_tface=tg["tri_tface"], groups=tg["groups"],
+        tri_gface=tg["tri_gface"], tri_group=tg["tri_group"], tri_tface=tg["tri_tface"], groups=tg["groups"], group_issues=tg["issues"],
         gface_body=tg["gface_body"], gface_face=tg["gface_face"], tface_gface=tg["tface_gface"], coarse=coarse,
         det_ring=det_ring,
     )

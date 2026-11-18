@@ -1,5 +1,6 @@
 <template>
-  <section class="run-box">
+  <!-- the form that starts a sweep (Run tab) -->
+  <section v-if="mode === 'form'" class="run-box">
     <h4>Parameter sweep</h4>
     <p class="muted small">
       Simulate the same design with several values of one parameter, for example TiO₂ loading from 0.02 to 0.3 %, and see efficiency, uniformity and colour against it.
@@ -36,7 +37,11 @@
       <button class="btn primary" :disabled="busy || values.length < 2 || !ws.check.value" @click="start"><Play :size="15" /> Run sweep</button>
       <p v-if="error" class="error small">{{ error }}</p>
     </template>
+  </section>
 
+  <!-- the sweeps that were run, with their charts (Results tab) -->
+  <section v-else-if="sweeps.length" class="run-box">
+    <h4>Parameter sweeps</h4>
     <div v-for="sw in sweeps" :key="sw.id" class="sweep-card">
       <div class="part-head">
         <strong class="small">{{ sw.label }} sweep, {{ sw.part }}</strong>
@@ -78,7 +83,8 @@ import { fmtPct } from "../utils/colormap";
 import { partPattern, resolvePart } from "../utils/setup";
 import LineChart from "./LineChart.vue";
 
-defineEmits<{ open: [id: string] }>();
+defineProps<{ mode: "form" | "results" }>();
+const emit = defineEmits<{ open: [id: string]; started: [] }>();
 const ws = useWorkspace();
 
 const PARAMS = [
@@ -140,6 +146,7 @@ async function start() {
     const p = PARAMS.find((x) => x.id === parameter.value)!;
     await api.createSweep(ws.rid.value, { name: p.label, parameter: parameter.value, part: partPattern(inst, ws.parts.value), values: values.value, settings: { rays: rays.value } });
     await ws.loadRuns();
+    emit("started");
   } catch (e) {
     error.value = (e as Error).message;
   } finally {

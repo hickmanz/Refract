@@ -48,9 +48,7 @@
           </li>
         </ul>
         <div class="tab-actions">
-          <button class="btn small" :class="{ on: picking(det.id) }" @click="togglePick(det.id)">
-            <MousePointerClick :size="14" /> {{ picking(det.id) ? "Click faces in 3D…" : "Add faces" }}
-          </button>
+          <PickButton :active="picking(det.id)" label="Add faces in 3D" @click="togglePick(det.id)" />
           <span v-if="info(det.id)" class="muted small">
             {{ info(det.id)!.areaMm2.toFixed(1) }} mm² · map {{ info(det.id)!.nu }} × {{ info(det.id)!.nv }} px
           </span>
@@ -64,9 +62,10 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { FlipHorizontal2, FlipVertical2, Info, MousePointerClick, Plus, Trash2, X } from "lucide-vue-next";
+import { FlipHorizontal2, FlipVertical2, Info, Plus, Trash2, X } from "lucide-vue-next";
 import { useWorkspace } from "../composables/useWorkspace";
 import CheckWarnings from "./CheckWarnings.vue";
+import PickButton from "./PickButton.vue";
 import { newId } from "../utils/setup";
 
 const ws = useWorkspace();

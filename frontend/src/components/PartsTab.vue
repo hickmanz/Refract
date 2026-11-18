@@ -55,13 +55,7 @@
             <select v-model="ws.overrideFinish.value">
               <option v-for="f in allFinishes" :key="f.id" :value="f.id">{{ f.name }}</option>
             </select>
-            <button
-              class="btn small"
-              :class="{ on: pickActive(row.inst) }"
-              @click="startPick(row.inst)"
-            >
-              <MousePointerClick :size="14" /> {{ pickActive(row.inst) ? "Click faces in 3D…" : "Pick faces" }}
-            </button>
+            <PickButton :active="pickActive(row.inst)" label="Pick faces in 3D" @click="startPick(row.inst)" />
           </div>
         </div>
       </li>
@@ -75,10 +69,11 @@
 
 <script setup lang="ts">
 import { computed, watch } from "vue";
-import { AlertTriangle, Eye, EyeOff, MousePointerClick, RotateCcw, X } from "lucide-vue-next";
+import { AlertTriangle, Eye, EyeOff, RotateCcw, X } from "lucide-vue-next";
 import type { PartDoc, Setup } from "../api";
 import { useWorkspace } from "../composables/useWorkspace";
 import CheckWarnings from "./CheckWarnings.vue";
+import PickButton from "./PickButton.vue";
 import { instanceForPattern, resolvePart, ruleFor } from "../utils/setup";
 
 const ws = useWorkspace();

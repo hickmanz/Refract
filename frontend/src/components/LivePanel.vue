@@ -70,7 +70,7 @@
             <option v-for="r in LIVE_RAY_CHOICES" :key="r" :value="r">{{ r.toLocaleString() }}</option>
           </select>
         </label>
-        <button class="btn small" :disabled="live.phase.value !== 'done'" title="Keep this result as a run in the Run tab" @click="live.keep()"><Save :size="14" /> Keep</button>
+        <button class="btn small" :disabled="live.phase.value !== 'done'" title="Keep this result as a run in the Results tab" @click="live.keep()"><Save :size="14" /> Keep</button>
       </div>
       <label v-if="live.gpu.value?.available" class="mini" title="Trace on the GPU: the same physics, many times faster, so a preview sharpens in moments.">
         <span>Solver</span>

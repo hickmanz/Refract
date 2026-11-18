@@ -7,9 +7,7 @@
     <CheckWarnings rematch-only />
 
     <div class="tab-actions">
-      <button class="btn small" :class="{ on: addActive }" @click="toggleAdd">
-        <MousePointerClick :size="14" /> {{ addActive ? "Click emitting faces… (Esc to stop)" : "Pick faces to add LEDs" }}
-      </button>
+      <PickButton :active="addActive" label="Pick faces to add LEDs" active-label="Picking LED faces: click to finish" @click="toggleAdd" />
       <label class="mini inline">
         <span>Model</span>
         <select v-model="ws.newLedModel.value">
@@ -44,7 +42,7 @@
             <template v-else>Not placed on a face yet</template>
           </span>
           <label class="check small"><input :checked="!!led.placement.flip" type="checkbox" @change="setFlip(led, ($event.target as HTMLInputElement).checked)" /> flip</label>
-          <button class="btn small" :class="{ on: isRepick(led) }" @click="repick(led)">{{ isRepick(led) ? "Click face…" : "Re-pick" }}</button>
+          <PickButton :active="isRepick(led)" label="Re-pick face" active-label="Click a face…" @click="repick(led)" />
         </div>
         <div v-if="modelOf(led)" class="muted small">
           {{ modelOf(led)!.channels.length }} channel{{ modelOf(led)!.channels.length === 1 ? "" : "s" }} ·
@@ -62,10 +60,11 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { Check, Copy, MousePointerClick, Trash2 } from "lucide-vue-next";
+import { Check, Copy, Trash2 } from "lucide-vue-next";
 import type { LedDef } from "../api";
 import { useWorkspace } from "../composables/useWorkspace";
 import CheckWarnings from "./CheckWarnings.vue";
+import PickButton from "./PickButton.vue";
 import { newId } from "../utils/setup";
 
 const ws = useWorkspace();
