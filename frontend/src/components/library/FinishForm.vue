@@ -4,14 +4,18 @@
     <label class="field">
       <span>Surface type</span>
       <select v-model="doc.type" :disabled="readonly">
-        <option value="dielectric">Transparent surface (refracts and reflects: polished, textured)</option>
-        <option value="opaque">Opaque surface (reflects or absorbs: paint, plastic, coating)</option>
+        <option value="texture">Texture (roughness only: VDI, MT, polished; works on any material)</option>
+        <option value="dielectric">Transparent surface (roughness for a volume material; older entries)</option>
+        <option value="opaque">Surface preset (colour, reflectances and roughness in one: paint, plastic, coating)</option>
       </select>
     </label>
     <label class="field">
       <span>Roughness (RMS slope σ)</span>
       <input v-model.number="doc.sigma" type="number" step="0.01" min="0" max="1.5" :disabled="readonly" />
-      <small class="muted">0 is a perfect mirror/polish. About 0.05 is a light frosting, 0.3 or more is a heavy texture (e.g. VDI 30).</small>
+      <small class="muted">0 is a perfect mirror/polish. About 0.05 is a light frosting, 0.3 or more is a heavy texture (e.g. VDI 30). A rule of thumb from the roughness Ra: σ ≈ 0.12 × √(Ra in µm).</small>
+    </label>
+    <label v-if="doc.type === 'texture'" class="check small">
+      <input v-model="doc.inherit" type="checkbox" :disabled="readonly" /> keep the roughness defined in the material (ignore the value above)
     </label>
     <template v-if="doc.type === 'opaque'">
       <div class="field">

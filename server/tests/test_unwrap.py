@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from lightsim.engine import unwrap
+from refract.engine import unwrap
 
 
 def _cylinder_patch(radius=10.0, arc_deg=120.0, height=20.0, nu=24, nv=10):

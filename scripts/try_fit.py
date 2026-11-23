@@ -1,6 +1,6 @@
 import sys, time
 sys.path.insert(0, r"F:\Projects\LightSim\server")
-from lightsim.materials import fit
+from refract.materials import fit
 
 t = time.time()
 print(fit.simulate_slab(2.0, 0.0, 0.0), "(clear: expect ~0.92 = 1-2*R/(1+R))")

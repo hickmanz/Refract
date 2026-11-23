@@ -6,6 +6,27 @@
       <button class="icon-btn" title="Hide this panel" @click="emit('close')"><X :size="15" /></button>
     </div>
 
+    <!-- no run is open yet: say so and offer the finished runs -->
+    <section v-if="!hasRun" class="layer empty-state">
+      <div class="notice info"><Info :size="15" /><span>No results are open. The analysis shows a run's map, surfaces and rays on the model. Pick a run to start.</span></div>
+      <ul v-if="runs.length" class="run-pick">
+        <li v-for="r in runs" :key="r.id">
+          <button class="run-pick-item" @click="emit('pick-run', r.id)">
+            <strong>{{ r.name }}</strong>
+            <span class="muted small">
+              {{ fmtAgo(r.created) }} · {{ (r.raysTraced ?? r.settings.rays).toLocaleString() }} rays
+              <span v-if="r.hasAnalysis === false" class="chip" title="Made without the light path analysis: only the exit map can be shown">map only</span>
+            </span>
+          </button>
+        </li>
+      </ul>
+      <template v-else>
+        <p class="muted small">There are no finished runs yet.</p>
+        <button class="btn small" @click="emit('new-run')"><Play :size="14" /> Go to Runs</button>
+      </template>
+    </section>
+
+    <template v-if="hasRun">
     <!-- what was picked in the results -->
     <div class="picked" :class="{ empty: !sel }">
       <template v-if="sel">
@@ -30,6 +51,9 @@
         <button :class="{ on: av.layers.map === 'rays' }" :disabled="av.layers.rays === 'off'" :title="av.layers.rays === 'off' ? 'Turn the rays on first' : 'Where the rays that are shown land, with whatever filter they have'" @click="av.layers.map = 'rays'">Shown rays</button>
         <button :class="{ on: av.layers.map === 'off' }" @click="av.layers.map = 'off'">Off</button>
       </div>
+      <label class="switch" :class="{ disabled: av.layers.map === 'off' }" title="Draw the colour scale of the map that is on the model in a corner of the 3D view">
+        <input v-model="av.layers.showScale" type="checkbox" :disabled="av.layers.map === 'off'" /> Show the colour scale in the 3D view
+      </label>
       <template v-if="(av.layers.map === 'selection' || av.layers.map === 'rays') && av.modelMap.value">
         <div class="ramp">
           <span>0</span>
@@ -142,6 +166,13 @@
                 <option value="lost">lost / dropped</option>
               </select>
             </label>
+            <label v-if="detectorChoices.length > 1" class="mini" title="Only the light that reached this exit surface or receiver. Rays are also cut at it when they pass another one first.">
+              <span>Reaching</span>
+              <select v-model.number="av.form.detector" @change="onDetector">
+                <option :value="-1">any</option>
+                <option v-for="d in detectorChoices" :key="d.index" :value="d.index">{{ d.name }}</option>
+              </select>
+            </label>
             <label class="mini">
               <span>LED</span>
               <select v-model="av.form.led" @change="av.fetchRays()">
@@ -194,7 +225,7 @@
             </label>
           </div>
           <label class="switch" title="A ray that reaches the exit surface may carry on inside afterwards; this hides that part">
-            <input v-model="av.style.stopAtExit" type="checkbox" /> Stop each ray at the exit surface
+            <input v-model="av.style.stopAtExit" type="checkbox" /> Stop each ray at the detector
           </label>
           <label class="slider-row" title="Draw only the first segments of every ray">
             <span class="small">Bounces shown</span>
@@ -256,27 +287,29 @@
           <BarList :items="flow(face.goesTo ?? [])" />
         </template>
         <p v-else class="muted small">
-          This face is not in a surface group, so LightSim only counted the totals above. Add it to a group in the Groups tab, run again, and you will see
+          This face is not in a surface group, so Refract only counted the totals above. Add it to a group in the Groups tab, run again, and you will see
           where its light comes from, where it goes, and where it lands on the exit surface.
         </p>
       </div>
     </section>
+    </template>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { AlertTriangle, BarChart3, Layers, Map, MousePointerClick, RotateCcw, Waypoints, X } from "lucide-vue-next";
-import type { FaceReport, FlowItem, RaysFilter } from "../api";
+import { AlertTriangle, BarChart3, Info, Layers, Map, MousePointerClick, Play, RotateCcw, Waypoints, X } from "lucide-vue-next";
+import type { FaceReport, FlowItem, RaysFilter, RunMeta } from "../api";
 import { EVENTS, LED_PALETTE, injectAnalysisView, type AnalysisCtx } from "../composables/useAnalysisView";
 import { useWorkspace } from "../composables/useWorkspace";
 import { describeSurface } from "../utils/analysisText";
 import { cssGradient, fmtNum, fmtPct } from "../utils/colormap";
+import { fmtAgo } from "../utils/format";
 import BarList from "./BarList.vue";
 import FootprintMap from "./analysis/FootprintMap.vue";
 
-defineProps<{ ctx: AnalysisCtx | null }>();
-const emit = defineEmits<{ close: []; "open-results": [] }>();
+defineProps<{ ctx: AnalysisCtx | null; hasRun: boolean; runs: RunMeta[] }>();
+const emit = defineEmits<{ close: []; "open-results": []; "pick-run": [runId: string]; "new-run": [] }>();
 const av = injectAnalysisView();
 const ws = useWorkspace();
 
@@ -288,6 +321,13 @@ const footMode = ref<"last" | "touched">("touched");
 const turboCss = cssGradient("turbo").replace("to top", "to right");
 const css = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 const leds = computed(() => (ws.setup.value?.leds ?? []).map((l) => ({ id: l.id, name: l.name })));
+/** The exit surfaces and receivers of the setup, to choose which one "reaches the exit" means. */
+const detectorChoices = computed(() => (ws.setup.value?.detectors ?? []).map((d, index) => ({ index, name: d.name || `Detector ${index + 1}` })));
+function onDetector() {
+  // choosing a detector means "light that reaches it": the outcome follows, so the choice does what it says
+  if (av.form.detector >= 0 && !av.form.outcome) av.form.outcome = "exit";
+  void av.fetchRays();
+}
 const usedLeds = computed(() => {
   const seen = new Set((av.rays.value?.paths ?? []).map((p) => p.led));
   return leds.value.map((l, i) => ({ ...l, color: LED_PALETTE[i % LED_PALETTE.length] })).filter((l) => seen.has(l.id));
@@ -351,6 +391,13 @@ const densityText = computed(() => {
 .ramp { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--neutral-10); }
 .grad { flex: 1; height: 8px; border-radius: 4px; border: 1px solid var(--neutral-4); display: inline-block; }
 .hit-legend { display: flex; flex-direction: column; gap: 4px; }
+.run-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.run-pick-item {
+  width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; text-align: left;
+  border: 1px solid var(--neutral-4); border-radius: var(--radius-md); background: var(--neutral-1); color: inherit; font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.run-pick-item:hover { background: var(--accent-3); border-color: var(--accent-7); }
+.switch.disabled { opacity: 0.5; }
 .spot-chip { display: inline-flex; align-items: center; gap: 5px; }
 .spot-chip i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 </style>

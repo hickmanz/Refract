@@ -7,9 +7,9 @@ Synthetic geometry is built directly as an optical mesh (no CAD needed), so ever
 import numpy as np
 import pytest
 
-from lightsim import library as lib
-from lightsim.engine import kernels, sources, spectral, tracer
-from lightsim.engine.scene import build_scene
+from refract import library as lib
+from refract.engine import kernels, sources, spectral, tracer
+from refract.engine.scene import build_scene
 
 
 # -- synthetic optical meshes --------------------------------------------------------------------------

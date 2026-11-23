@@ -1,4 +1,4 @@
-﻿# Starts LightSim from source (development / no installer).
+﻿# Starts Refract from source (development / no installer).
 #   .\start.ps1            app window (falls back to the browser)
 #   .\start.ps1 -Browser   use the default browser
 #   .\start.ps1 -Setup     create the virtual environment, install the Python packages and build the UI first
@@ -26,6 +26,6 @@ if ($Setup -or -not (Test-Path "frontend\dist\index.html")) {
 }
 
 Set-Location server
-$args2 = @("-m", "lightsim", "--port", $Port)
+$args2 = @("-m", "refract", "--port", $Port)
 if ($Browser) { $args2 += "--browser" }
 & $py @args2

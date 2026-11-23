@@ -35,7 +35,7 @@
             <tr v-for="r in data.runs" :key="r.runId">
               <td>
                 <i class="mc-dot" :style="{ background: colorOf(r.runId) }" />
-                <strong>{{ r.variant ?? "Variant" }}</strong>
+                <strong>{{ r.design ? `${r.design} › ` : "" }}{{ r.variant ?? "Variant" }}</strong>
                 <span class="muted small"> · {{ r.revision }} · {{ r.name }}</span>
                 <span v-if="r.runId === baseline" class="chip led">baseline</span>
                 <div v-if="r.state && (r.stateFallback || r.state.id !== 'all')" class="muted small">state: {{ r.state.name }}<template v-if="r.stateFallback"> (the requested state does not exist here)</template></div>
@@ -175,7 +175,7 @@ function deltaClass(r: ProjectCompareRun, c: Col): string {
 
 // ── charts ───────────────────────────────────────────────────────────────────
 const ok = computed(() => (data.value?.runs ?? []).filter((r) => !r.error));
-const lab = (r: ProjectCompareRun) => `${r.variant ?? ""} · ${r.name ?? ""}`;
+const lab = (r: ProjectCompareRun) => `${r.design ? `${r.design} › ` : ""}${r.variant ?? ""} · ${r.name ?? ""}`;
 const profileSeries = computed(() =>
   ok.value.map((r) => {
     const p = (r.profileU ?? []) as (number | null)[];

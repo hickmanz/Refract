@@ -1,9 +1,12 @@
+import "./migrateStorage"; // first: moves the old lightsim.* settings to refract.* before anything reads them
 import { createApp } from "vue";
 import { createRouter, createWebHistory } from "vue-router";
+import "@fontsource-variable/inter"; // bundled: the app is offline
 import App from "./App.vue";
 import "./styles/index.css";
 import "./styles/app.css";
-import "./styles/lightsim.css";
+import "./styles/refract.css";
+import "./styles/refract-ui.css"; // the Refract look; keep last so it refines the rules above
 
 // Radix colour tokens (light + dark, switched by the .dark class on <html>)
 import "@radix-ui/colors/sky.css";

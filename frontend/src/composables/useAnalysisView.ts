@@ -26,6 +26,7 @@ export interface RayForm {
   outcome: "" | "exit" | "absorbed" | "escaped" | "lost";
   led: string;
   touched: number; // group index, -1 = any
+  detector: number; // exit surface / receiver (index in the setup) the light has to reach, -1 = any
   minBounce: number;
   maxBounce: number; // 0 = no limit
   count: number;
@@ -44,6 +45,13 @@ export interface ModelMap {
   values: number[][];
   vmax: number;
   detector: number;
+  unit: string;
+}
+
+/** The colour scale of one map drawn on the model: 0 up to `vmax` in `unit`, in the colours the map texture uses. */
+export interface MapScale {
+  label: string;
+  vmax: number;
   unit: string;
 }
 
@@ -107,9 +115,9 @@ export function useAnalysisView(
   const mapDetector = ref(0);
   const mapVmax = ref(1);
   const style = reactive({ color: "led" as RayColorMode, density: false, maxBounce: 0, opacity: 0.7, densityGain: 0.35, stopAtExit: false, showOthers: false });
-  const form = reactive<RayForm>({ outcome: "", led: "", touched: -1, minBounce: 0, maxBounce: 0, count: 400 });
+  const form = reactive<RayForm>({ outcome: "", led: "", touched: -1, detector: -1, minBounce: 0, maxBounce: 0, count: 400 });
   /** What the 3D view shows, as three independent layers. */
-  const layers = reactive({ map: "run" as MapLayer, surfaces: "off" as SurfaceLayer, rays: "off" as RayLayer, sameScale: false });
+  const layers = reactive({ map: "run" as MapLayer, surfaces: "off" as SurfaceLayer, rays: "off" as RayLayer, sameScale: false, showScale: false });
   let raysKey = "";
 
   // ── group colours (from the overview of the run) ───────────────────────────
@@ -136,6 +144,7 @@ export function useAnalysisView(
     if (form.outcome) filter.outcome = form.outcome;
     if (form.led) filter.led = form.led;
     if (form.touched >= 0) filter.touched = form.touched;
+    if (form.detector >= 0) filter.detector = form.detector;
     if (form.minBounce > 0 || form.maxBounce > 0) filter.bounces = [Math.max(0, form.minBounce), form.maxBounce > 0 ? form.maxBounce : 9999];
     return { filter, gface: baseGface.value };
   }
@@ -155,7 +164,7 @@ export function useAnalysisView(
       });
       shownFilter.value = filter;
       style.maxBounce = 0;
-      style.stopAtExit = filter.outcome === "exit" || (!filter.outcome && !!(filter.region || filter.family || filter.lastGroup !== undefined));
+      style.stopAtExit = filter.outcome === "exit" || (!filter.outcome && !!(filter.region || filter.family || filter.lastGroup !== undefined || filter.detector !== undefined));
     } catch (e) {
       rays.value = null;
       rayError.value = (e as Error).message;
@@ -168,7 +177,7 @@ export function useAnalysisView(
     baseFilter.value = base;
     baseGface.value = o.gface ?? null;
     rayLabel.value = label;
-    Object.assign(form, { outcome: base.outcome ?? "", led: "", touched: -1, minBounce: 0, maxBounce: 0 });
+    Object.assign(form, { outcome: base.outcome ?? "", led: "", touched: -1, detector: base.detector ?? -1, minBounce: 0, maxBounce: 0 });
     if (o.color) style.color = o.color;
     colorOverride.value = o.colors ?? {};
     await fetchRays();
@@ -195,6 +204,15 @@ export function useAnalysisView(
 
   /** Set by the section tool: draw only the rays' part inside a layer beside the cut (a ray fan). */
   const slab = ref<Slab | null>(null);
+  /** The detectors at which a ray is cut when "stop at the exit" is on: the chosen one, else every detector, receivers included (only the pass-through exits, which let the light go on by design, are left out). The light of a receiver does go on in the simulation; the cut is only for the picture. */
+  const stopDets = computed<number[] | null>(() => {
+    const f = shownFilter.value;
+    const chosen = f?.detector ?? f?.region?.detector;
+    if (chosen !== undefined) return [chosen];
+    const all = rays.value?.detectors ?? [];
+    if (!all.length) return null;
+    return all.map((d, i) => (d.through ? -1 : i)).filter((i) => i >= 0);
+  });
   const rayStyle = computed<RayStyle>(() => {
     const keys = ledIds.value;
     return {
@@ -203,6 +221,7 @@ export function useAnalysisView(
       density: style.density,
       maxBounce: style.maxBounce,
       stopAtExit: style.stopAtExit,
+      stopDets: stopDets.value,
       opacity: style.opacity,
       densityGain: style.densityGain,
       focusFace: inspected.value?.face.gface ?? null,
@@ -503,7 +522,7 @@ export function useAnalysisView(
 }
 
 export type AnalysisView = ReturnType<typeof useAnalysisView>;
-const KEY: InjectionKey<AnalysisView> = Symbol("lightsim-analysis-view");
+const KEY: InjectionKey<AnalysisView> = Symbol("refract-analysis-view");
 export const provideAnalysisView = (a: AnalysisView) => provide(KEY, a);
 export function injectAnalysisView(): AnalysisView {
   const a = inject(KEY);

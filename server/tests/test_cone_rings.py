@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from lightsim.engine import kernels, spectral, tracer
-from lightsim.engine.scene import ring_edges_deg
-from lightsim.results import DEFAULT_ANALYSIS, RunData
+from refract.engine import kernels, spectral, tracer
+from refract.engine.scene import ring_edges_deg
+from refract.results import DEFAULT_ANALYSIS, RunData
 from test_map_noise import _plate_scene
 
 

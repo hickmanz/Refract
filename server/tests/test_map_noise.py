@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from lightsim.engine import pixel_area, sources, tracer
-from lightsim.engine.scene import build_scene
-from lightsim.results import RunData  # noqa: F401  (import check: the module loads with the new fields)
+from refract.engine import pixel_area, sources, tracer
+from refract.engine.scene import build_scene
+from refract.results import RunData  # noqa: F401  (import check: the module loads with the new fields)
 from test_engine_physics import Builder, detector, led, library_with
 
 

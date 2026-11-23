@@ -1,5 +1,5 @@
 <template>
-  <div class="checker lightsim">
+  <div class="checker refract">
     <!-- ───────── top bar ───────── -->
     <header class="topbar">
       <RouterLink to="/" class="tbtn icon" title="All projects" aria-label="All projects"><ArrowLeft :size="18" /></RouterLink>
@@ -11,29 +11,58 @@
         <span v-else-if="ws.isActive.value" class="muted">{{ ws.meta.value?.progress.phase || "Working…" }}</span>
       </div>
       <div class="spacer" />
-      <label v-if="variants.length > 0" class="rev-picker" title="Variant: a design alternative (LED spacing, reflector, light pipe...) with its own setup">
-        <GitBranch :size="14" />
-        <select :value="ws.variantId.value" @change="goVariant(($event.target as HTMLSelectElement).value)">
-          <option v-for="v in variants" :key="v.id" :value="v.id">{{ v.name }}</option>
-        </select>
-      </label>
+      <DesignSwitcher
+        v-if="variants.length > 0"
+        :designs="designs"
+        :variants="variants"
+        :current-revision-id="id"
+        @open="goRevision"
+        @new-variant="newVariantInDesign"
+        @duplicate="duplicateVariant"
+        @rename-design="renameDesign"
+        @delete-design="deleteDesign"
+        @move-variant="moveVariant"
+      />
+      <RevisionPicker :revisions="variantRevisions" :current-revision-id="id" @open="goRevision" />
       <button class="tbtn icon" :disabled="!ws.variant.value" title="Rename this variant" aria-label="Rename this variant" @click="renameVariant"><Pencil :size="15" /></button>
-      <button class="tbtn icon" :disabled="variants.length < 2" title="Delete this variant with its revisions and runs" aria-label="Delete this variant" @click="deleteVariant"><Trash2 :size="15" /></button>
-      <button class="tbtn" :disabled="!ws.ready.value || variantUploading" title="Add a design alternative: upload another STEP file as a new variant that starts with a copy of this setup" @click="variantFile?.click()">
+      <button class="tbtn icon" :disabled="!canDeleteVariant" :title="canDeleteVariant ? 'Delete this variant with its revisions and runs' : 'The last variant of a design cannot be deleted; delete the design instead'" aria-label="Delete this variant" @click="deleteVariant"><Trash2 :size="15" /></button>
+      <button class="tbtn" :disabled="!ws.ready.value || variantUploading" title="New variant in this design: upload another STEP file (for example another diffuser thickness); it starts with a copy of this variant's setup" @click="newVariantInDesign(ws.variant.value?.designId ?? '')">
         <Plus :size="16" /><span class="tlabel">New variant</span>
       </button>
+      <button class="tbtn" :disabled="!ws.ready.value || variantUploading" title="Duplicate this variant: same geometry and a copy of its setup, no upload (try other materials or LEDs next to this one)" @click="duplicateVariant(id)">
+        <Copy :size="16" /><span class="tlabel">Duplicate</span>
+      </button>
+      <button class="tbtn" :disabled="!ws.ready.value || variantUploading" title="New design (for example a new reflector): upload its STEP file; its first variant starts with a copy of this variant's setup" @click="newDesign">
+        <Layers :size="16" /><span class="tlabel">New design</span>
+      </button>
       <input ref="variantFile" type="file" accept=".step,.stp,.STEP,.STP" hidden @change="onVariantFile" />
-      <label v-if="revisions.length > 0" class="rev-picker" title="Revision of this variant">
-        <History :size="14" />
-        <select :value="id" @change="goRevision(($event.target as HTMLSelectElement).value)">
-          <option v-for="(r, i) in revisions" :key="r.id" :value="r.id">
-            Rev {{ revisions.length - i }}{{ r.label ? ` “${r.label}”` : "" }} · {{ r.filename }} · {{ fmtAgo(r.created) }}
-          </option>
-        </select>
-      </label>
+      <div v-if="ws.ready.value" ref="meshMenuEl" class="mesh-wrap">
+        <button
+          class="tbtn icon"
+          :class="{ on: meshMenuOpen }"
+          :disabled="remeshing"
+          :title="`Mesh quality: ${currentQuality}. Mesh the same STEP file again at another quality, as a new revision (this one and its runs stay as they are), to check that results do not depend on the mesh.`"
+          aria-label="Re-mesh at another quality"
+          aria-haspopup="menu"
+          :aria-expanded="meshMenuOpen"
+          @click="meshMenuOpen = !meshMenuOpen"
+        >
+          <Loader2 v-if="remeshing" :size="16" class="spin" />
+          <Shapes v-else :size="16" />
+          <ChevronDown :size="11" class="mesh-caret" />
+        </button>
+        <div v-if="meshMenuOpen" class="mesh-menu" role="menu">
+          <div class="mesh-menu-head">Re-mesh as a new revision</div>
+          <button v-for="q in meshQualities" :key="q.id" role="menuitem" :class="{ current: q.id === currentQuality }" @click="onRemesh(q.id)">
+            <span class="mesh-menu-name">{{ q.name }}<span v-if="q.id === currentQuality" class="mesh-menu-cur"><Check :size="12" /> current</span></span>
+            <span class="mesh-menu-hint">{{ q.hint }}</span>
+          </button>
+        </div>
+      </div>
       <span class="tsep" />
       <div class="tgroup">
         <button class="tbtn" :disabled="!ws.ready.value" title="Materials, finishes and LED models" @click="libraryOpen = true"><BookOpen :size="16" /><span class="tlabel">Library</span></button>
+        <button class="tbtn" :disabled="!ws.project.value" title="Every finished run of this project, by design and variant, with the headline results" @click="overviewOpen = true"><Table2 :size="16" /><span class="tlabel">Overview</span></button>
         <button class="tbtn" :disabled="!ws.ready.value" title="Suggest materials, LEDs and the exit surface from the CAD" @click="onSuggest"><Wand2 :size="16" /><span class="tlabel">Auto-setup</span></button>
         <button class="tbtn" :disabled="!ws.ready.value" title="Keep this setup but follow the geometry: add or remove LEDs, regenerate the 'only' states" @click="onAdapt"><Replace :size="16" /><span class="tlabel">Adapt setup</span></button>
       </div>
@@ -131,14 +160,15 @@
             <button class="tbtn" :class="{ on: dimOthers }" title="Fade the other parts when one is selected" @click="dimOthers = !dimOthers"><Ghost :size="15" /><span class="tlabel">Fade others</span></button>
             <button class="tbtn" :class="{ on: allTransparent }" title="Make every part transparent, to see what is inside" @click="allTransparent = !allTransparent"><Blend :size="15" /><span class="tlabel">See-through</span></button>
             <button class="tbtn" :class="{ on: showLeds }" title="Show LED positions and directions" @click="showLeds = !showLeds"><Lightbulb :size="15" /><span class="tlabel">LEDs</span></button>
+            <button class="tbtn" :class="{ on: ws.meshAll.value }" title="Show the mesh the rays are traced against (all shown parts)" @click="ws.meshAll.value = !ws.meshAll.value"><Grid3x3 :size="15" /><span class="tlabel">Mesh</span></button>
             <button class="tbtn icon" title="Fit the whole model" aria-label="Fit the whole model" @click="viewer.resetView()"><Maximize :size="16" /></button>
           </div>
           <div class="tgroup">
             <button class="tbtn" :class="{ on: livePanelOpen || live.enabled.value }" title="Live physics while you edit, and a photoreal view of the result" @click="livePanelOpen = !livePanelOpen"><Zap :size="15" /><span class="tlabel">Live</span></button>
           </div>
-          <div v-if="activeRun" class="tgroup">
-            <button class="tbtn" :class="{ on: resultsShown }" title="Show the results of the opened run" @click="resultsShown = !resultsShown"><BarChart3 :size="15" /><span class="tlabel">Results</span></button>
-            <button class="tbtn" :class="{ on: dockShown }" title="What to show in the 3D view: the map, surfaces and rays; click a surface to inspect it" @click="toggleDock"><ScanSearch :size="15" /><span class="tlabel">Analysis</span></button>
+          <div class="tgroup">
+            <button v-if="activeRun" class="tbtn" :class="{ on: resultsShown }" title="Show the results of the opened run" @click="resultsShown = !resultsShown"><BarChart3 :size="15" /><span class="tlabel">Results</span></button>
+            <button class="tbtn" :class="{ on: dockShown }" :title="activeRun ? 'What to show in the 3D view: the map, surfaces and rays; click a surface to inspect it' : 'Pick a run to show its map, surfaces and rays on the model'" @click="toggleDock"><ScanSearch :size="15" /><span class="tlabel">Analysis</span></button>
           </div>
         </div>
 
@@ -154,6 +184,7 @@
           :mode="view.mode"
           :resolution="view.resolution"
           :state="live.shownState.value"
+          :hidden-exits="view.hiddenExits"
           @status="(s) => (view.status = s)"
         />
         <LivePanel v-if="livePanelOpen && ws.ready.value && !resultsCover" :live="live" :view="view" @close="livePanelOpen = false" />
@@ -204,7 +235,9 @@
           </SectionPanel>
         </div>
 
-        <AnalysisDock v-if="dockShown" :ctx="dockCtx" @close="dockOpen = false" @open-results="resultsShown = true" />
+        <MapScaleLegend v-if="mapScales.length" :scales="mapScales" />
+
+        <AnalysisDock v-if="dockShown" :ctx="dockCtx" :has-run="!!activeRun" :runs="pickableRuns" @close="dockOpen = false" @open-results="resultsShown = true" @pick-run="pickRunForDock" @new-run="newRunFromDock" />
 
         <HotkeyOverlay :hotkeys="viewer.hotkeys.activeHotkeys.value" :visible="showHotkeys" />
 
@@ -231,6 +264,7 @@
 
     <ContextMenu :visible="menu.visible" :items="menuItems" :x="menu.x" :y="menu.y" @pick="onMenuPick" @close="menu.visible = false" />
     <LibraryDialog v-if="libraryOpen" @close="libraryOpen = false" />
+    <OverviewDialog v-if="overviewOpen" @close="overviewOpen = false" @open="openOverviewRun" />
   </div>
 </template>
 
@@ -245,17 +279,21 @@ import {
   BookOpen,
   Box,
   Boxes,
+  Check,
+  ChevronDown,
   Crosshair,
   Eye,
   EyeOff,
   Focus,
   Ghost,
-  GitBranch,
-  History,
+  Copy,
+  Grid3x3,
+  Layers,
   Info,
   Keyboard,
   Lightbulb,
   ListTree,
+  Loader2,
   Maximize,
   Moon,
   Pencil,
@@ -270,31 +308,35 @@ import {
   Slice,
   SlidersHorizontal,
   Sun,
+  Table2,
   Trash2,
   Wand2,
   X,
   Zap,
 } from "lucide-vue-next";
 import * as THREE from "three";
-import { api, type RunScene, type StateResult } from "../api";
+import { api, type DetectorResult, type MeshQuality, type RunScene, type StateResult } from "../api";
 import { createWorkspace, hexToNumber, provideWorkspace } from "../composables/useWorkspace";
-import { provideAnalysisView, useAnalysisView, type AnalysisCtx } from "../composables/useAnalysisView";
+import { provideAnalysisView, useAnalysisView, type AnalysisCtx, type MapScale, type ModelMap } from "../composables/useAnalysisView";
 import { useSectionLight } from "../composables/useSectionLight";
 import SectionLight from "../components/analysis/SectionLight.vue";
 import { useThreeViewer, type TreeNode } from "../composables/viewer/useThreeViewer";
 import { useSetupScene, type FaceHighlight } from "../composables/useSetupScene";
 import { useResultsOverlay } from "../composables/useResultsOverlay";
+import { useOpticalMeshOverlay } from "../composables/useOpticalMeshOverlay";
 import { useLivePreview } from "../composables/useLivePreview";
-import { isDark, toggleTheme } from "../composables/useTheme";
+import { isDark, toggleTheme, viewportBackground } from "../composables/useTheme";
 import { newId, partPattern, resolvePart, ruleFor, sigOf } from "../utils/setup";
 import { drawMap } from "../utils/drawMap";
 import { exitFrame } from "../utils/analysisText";
-import { fmtAgo } from "../utils/format";
+import DesignSwitcher from "../components/DesignSwitcher.vue";
+import RevisionPicker from "../components/RevisionPicker.vue";
 import PartsTab from "../components/PartsTab.vue";
 import LedsTab from "../components/LedsTab.vue";
 import DetectorTab from "../components/DetectorTab.vue";
 import GroupsTab from "../components/GroupsTab.vue";
 import AnalysisDock from "../components/AnalysisDock.vue";
+import MapScaleLegend from "../components/MapScaleLegend.vue";
 import StatesTab from "../components/StatesTab.vue";
 import RunTab from "../components/RunTab.vue";
 import ResultsTab from "../components/ResultsTab.vue";
@@ -302,6 +344,7 @@ import LivePanel, { type PhotorealView } from "../components/LivePanel.vue";
 import LiveViewOverlay from "../components/LiveViewOverlay.vue";
 import ResultsView from "../components/ResultsView.vue";
 import LibraryDialog from "../components/LibraryDialog.vue";
+import OverviewDialog from "../components/OverviewDialog.vue";
 import ContextMenu, { type MenuItem } from "../components/ContextMenu.vue";
 import ModelTreeOverlay from "../components/viewer/ModelTreeOverlay.vue";
 import SectionPanel from "../components/viewer/SectionPanel.vue";
@@ -317,14 +360,22 @@ ws.start();
 
 const route = useRoute();
 const variants = computed(() => ws.project.value?.variants ?? []);
-/** Revisions of the current variant, newest first. */
-const revisions = computed(() => (ws.project.value?.revisionList ?? []).filter((r) => !ws.variantId.value || r.variantId === ws.variantId.value));
+const designs = computed(() => ws.project.value?.designs ?? []);
+/** Every revision of the project, newest first. */
+const allRevisions = computed(() => ws.project.value?.revisionList ?? []);
+/** The revisions of the variant being edited (the revision picker shows when there are several). */
+const variantRevisions = computed(() => allRevisions.value.filter((r) => r.variantId === ws.variant.value?.id));
+const canDeleteVariant = computed(() => {
+  const v = ws.variant.value;
+  return !!v && variants.value.filter((x) => x.designId === v.designId).length > 1;
+});
 function goRevision(rid: string) {
   if (rid !== props.id) router.push(`/r/${rid}`);
 }
-function goVariant(vid: string) {
-  const latest = variants.value.find((v) => v.id === vid)?.latest;
-  if (latest && latest.id !== props.id) router.push(`/r/${latest.id}`);
+/** Where to go once something was deleted: the latest revision of what is left. */
+function goAfterDelete(project: { variants: { latest: { id: string } | null }[]; latest: { id: string } | null }) {
+  const next = project.variants.find((v) => v.latest)?.latest ?? project.latest;
+  router.push(next ? `/r/${next.id}` : "/");
 }
 async function renameVariant() {
   const v = ws.variant.value;
@@ -342,32 +393,123 @@ async function renameVariant() {
 async function deleteVariant() {
   const v = ws.variant.value;
   const pid = ws.meta.value?.projectId;
-  if (!v || !pid || variants.value.length < 2) return;
+  if (!v || !pid || !canDeleteVariant.value) return;
   if (!confirm(`Delete the variant "${v.name}" with its ${v.revisions.length} revision(s), its setup and every simulation run?`)) return;
   try {
     const project = await api.deleteVariant(pid, v.id);
-    const next = project.variants[0]?.latest ?? project.latest;
-    router.push(next ? `/r/${next.id}` : "/");
+    // stay in the same design when possible
+    const sibling = project.variants.find((x) => x.designId === v.designId && x.latest);
+    if (sibling?.latest) router.push(`/r/${sibling.latest.id}`);
+    else goAfterDelete(project);
+  } catch (e) {
+    alert((e as Error).message);
+  }
+}
+async function renameDesign(did: string) {
+  const d = designs.value.find((x) => x.id === did);
+  const pid = ws.meta.value?.projectId;
+  if (!d || !pid) return;
+  const name = window.prompt("Rename design", d.name);
+  if (!name?.trim()) return;
+  try {
+    await api.renameDesign(pid, did, name.trim());
+    await ws.loadProject();
+  } catch (e) {
+    alert((e as Error).message);
+  }
+}
+async function deleteDesign(did: string) {
+  const d = designs.value.find((x) => x.id === did);
+  const pid = ws.meta.value?.projectId;
+  if (!d || !pid || designs.value.length < 2) return;
+  const inside = variants.value.filter((v) => v.designId === did);
+  const revs = inside.reduce((n, v) => n + v.revisions.length, 0);
+  if (!confirm(`Delete the design "${d.name}" with its ${inside.length} variant(s), ${revs} revision(s), their setups and every simulation run?`)) return;
+  try {
+    const project = await api.deleteDesign(pid, did);
+    // only leave the page when what is open was deleted
+    if (inside.some((v) => v.id === ws.variantId.value)) goAfterDelete(project);
+    else await ws.loadProject();
+  } catch (e) {
+    alert((e as Error).message);
+  }
+}
+async function moveVariant(vid: string) {
+  const v = variants.value.find((x) => x.id === vid);
+  const pid = ws.meta.value?.projectId;
+  if (!v || !pid) return;
+  const others = designs.value.filter((d) => d.id !== v.designId);
+  const answer = window.prompt(`Move the variant "${v.name}" to which design? Type its name:\n${others.map((d) => `  ${d.name}`).join("\n")}`, others[0]?.name ?? "");
+  if (answer === null) return;
+  const target = others.find((d) => d.name.trim().toLowerCase() === answer.trim().toLowerCase());
+  if (!target) {
+    alert(`There is no other design called "${answer.trim()}".`);
+    return;
+  }
+  try {
+    await api.moveVariant(pid, vid, target.id);
+    await ws.loadProject();
   } catch (e) {
     alert((e as Error).message);
   }
 }
 
-// A new variant is a design alternative: another STEP file that starts from a copy of this variant's setup.
+// New variants and designs start from another STEP file (or, for "Duplicate", from the same one) and a copy of the setup.
 const variantFile = ref<HTMLInputElement | null>(null);
 const variantUploading = ref(false);
+let pendingUpload: { designId?: string; newDesign?: boolean; copyFrom: string } | null = null;
+/** The variant whose setup a new variant of this design starts with: the open one when it is in the design, else the design's newest. */
+function setupSourceFor(did: string): string | undefined {
+  if (ws.variant.value?.designId === did) return ws.variantId.value;
+  const inside = variants.value.filter((v) => v.designId === did);
+  return inside[inside.length - 1]?.id ?? ws.variantId.value;
+}
+function newVariantInDesign(did: string) {
+  const copyFrom = setupSourceFor(did);
+  if (!did || !copyFrom) return;
+  pendingUpload = { designId: did, copyFrom };
+  variantFile.value?.click();
+}
+function newDesign() {
+  if (!ws.variantId.value) return;
+  pendingUpload = { newDesign: true, copyFrom: ws.variantId.value };
+  variantFile.value?.click();
+}
+/** A new variant with the same geometry: no upload, the CAD is imported again; the setup is a copy to change materials or LEDs in. */
+async function duplicateVariant(rid: string) {
+  const rev = allRevisions.value.find((r) => r.id === rid) ?? (rid === props.id ? ws.meta.value : null);
+  const source = variants.value.find((v) => v.id === rev?.variantId) ?? ws.variant.value;
+  const name = window.prompt("Name of the new variant (same geometry, copy of the setup)", `${source?.name ?? "Variant"} (copy)`);
+  if (name === null) return;
+  variantUploading.value = true;
+  try {
+    const res = await api.duplicateRevision(rid, name.trim() || undefined);
+    router.push(`/r/${res.id}`);
+  } catch (err) {
+    alert((err as Error).message);
+  } finally {
+    variantUploading.value = false;
+  }
+}
 async function onVariantFile(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = "";
   const pid = ws.meta.value?.projectId;
-  if (!file || !pid) return;
+  const target = pendingUpload;
+  pendingUpload = null;
+  if (!file || !pid || !target) return;
   const suggested = file.name.replace(/\.[^.]+$/, "");
-  const name = window.prompt("Name of the new variant", suggested);
+  const name = window.prompt(target.newDesign ? "Name of the new design" : "Name of the new variant", suggested);
   if (name === null) return;
   variantUploading.value = true;
   try {
-    const res = await api.upload(file, { projectId: pid, variantId: "new", variantName: name.trim() || suggested, copySetupFrom: ws.variantId.value });
+    const res = await api.upload(
+      file,
+      target.newDesign
+        ? { projectId: pid, variantId: "new", designId: "new", designName: name.trim() || suggested, copySetupFrom: target.copyFrom }
+        : { projectId: pid, variantId: "new", designId: target.designId, variantName: name.trim() || suggested, copySetupFrom: target.copyFrom },
+    );
     router.push({ path: `/r/${res.id}`, query: { adapt: "1" } }); // the copied setup is adapted to the new geometry once it is imported
   } catch (err) {
     alert((err as Error).message);
@@ -382,7 +524,7 @@ async function onAdapt() {
     alert((e as Error).message);
   }
 }
-// arriving from "New variant": adapt the copied setup to the geometry as soon as it can be read
+// arriving from "New variant" / "New design": adapt the copied setup to the geometry as soon as it can be read
 let adapted = false;
 watch(
   () => ws.ready.value && ws.setup.value !== null,
@@ -405,6 +547,42 @@ async function cancelJob() {
   await api.cancelImport(props.id);
   await ws.refreshMeta();
 }
+const meshQualities: { id: MeshQuality; name: string; hint: string }[] = [
+  { id: "coarse", name: "Coarse", hint: "2x the deflection; fastest" },
+  { id: "normal", name: "Normal", hint: "the default" },
+  { id: "fine", name: "Fine", hint: "1/4 the deflection, half the facet angle" },
+];
+const currentQuality = computed<MeshQuality>(() => (ws.partsDoc.value?.quality ?? ws.meta.value?.meshQuality ?? "normal") as MeshQuality);
+const remeshing = ref(false);
+const meshMenuOpen = ref(false);
+const meshMenuEl = ref<HTMLElement | null>(null);
+function closeMeshMenuOutside(e: MouseEvent) {
+  if (meshMenuOpen.value && !meshMenuEl.value?.contains(e.target as Node)) meshMenuOpen.value = false;
+}
+function closeMeshMenuKey(e: KeyboardEvent) {
+  if (e.key === "Escape") meshMenuOpen.value = false;
+}
+onMounted(() => {
+  document.addEventListener("mousedown", closeMeshMenuOutside);
+  document.addEventListener("keydown", closeMeshMenuKey);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", closeMeshMenuOutside);
+  document.removeEventListener("keydown", closeMeshMenuKey);
+});
+async function onRemesh(quality: MeshQuality) {
+  meshMenuOpen.value = false;
+  if (!confirm(`Mesh this STEP file again at "${quality}" quality as a new revision of this variant? This revision and its runs are not changed.`)) return;
+  remeshing.value = true;
+  try {
+    const res = await api.remesh(props.id, quality);
+    router.push(`/r/${res.id}`);
+  } catch (err) {
+    alert((err as Error).message);
+  } finally {
+    remeshing.value = false;
+  }
+}
 async function reimport() {
   await api.reimport(props.id);
   await ws.refreshMeta();
@@ -425,6 +603,7 @@ const tabs = computed<{ id: TabId; label: string; icon: Component; count?: numbe
 ]);
 
 const libraryOpen = ref(false);
+const overviewOpen = ref(false);
 async function onSuggest() {
   if (ws.setup.value && (ws.setup.value.leds.length || ws.setup.value.detectors.length) && !confirm("Replace the current setup with a suggestion made from the CAD?")) return;
   try {
@@ -439,6 +618,8 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 const meshUrl = ref("");
 const viewer = useThreeViewer(canvasEl, { meshUrl, metadataUrl: ref("") });
 (window as unknown as { __viewer?: unknown }).__viewer = viewer;
+// the viewport follows the theme (light / dark switch)
+watch(isDark, () => viewer.setSceneBackground(viewportBackground()));
 watch(
   () => [ws.meta.value?.model_ready, ws.meta.value?.finished ?? ws.meta.value?.started ?? 0] as const,
   ([ready, version]) => {
@@ -492,7 +673,19 @@ watch(
   },
 );
 const dockOpen = ref(false);
-const dockShown = computed(() => !!activeRun.value && !resultsShown.value && dockOpen.value);
+// with no run open there is no results page to cover the view: the panel then offers the runs to pick from
+const dockShown = computed(() => dockOpen.value && (!activeRun.value || !resultsShown.value));
+/** The finished runs the panel offers when none is open (like the Results tab: no sweep variants), newest first. */
+const pickableRuns = computed(() => ws.runs.value.filter((r) => !r.sweep && r.status === "ready").sort((a, b) => b.created - a.created));
+function pickRunForDock(rid: string) {
+  activeRun.value = rid;
+  resultsShown.value = false; // stay on the 3D view: the map appears on the model as soon as the run has loaded
+  dockOpen.value = true;
+}
+function newRunFromDock() {
+  tab.value = "runs";
+  dockOpen.value = false;
+}
 const dockCtx = computed<AnalysisCtx | null>(() => {
   const c = current.value;
   const d = c?.result.detectors[c.detector];
@@ -520,10 +713,15 @@ function toggleDock() {
 }
 // the layers of the analysis only work while the 3D view is on screen; clicking a face inspects it while the panel is open
 watch(() => !!activeRun.value && !resultsShown.value, (v) => (av.viewActive.value = v), { immediate: true });
-watch(dockShown, (v) => (av.inspecting.value = v), { immediate: true });
+watch(() => dockShown.value && !!activeRun.value, (v) => (av.inspecting.value = v), { immediate: true });
 /** Faces painted by the light path analysis (inspected face, surface hit map). */
 const analysisHighlights = computed<FaceHighlight[]>(() => av.highlights.value);
-const allHighlights = computed(() => [...ws.highlights.value, ...analysisHighlights.value]);
+// the exit surfaces / receivers are painted only while their tab is open (or faces are being picked into one)
+const allHighlights = computed(() => {
+  const showDetectors = tab.value === "detector" || ws.pick.value?.kind === "detector";
+  const own = showDetectors ? ws.highlights.value : ws.highlights.value.filter((h) => !h.key.startsWith("det:"));
+  return [...own, ...analysisHighlights.value];
+});
 const sceneCtl = useSetupScene(viewer, {
   parts: ws.parts,
   setup: ws.setup,
@@ -535,10 +733,36 @@ const sceneCtl = useSetupScene(viewer, {
 });
 const overlay = useResultsOverlay(viewer);
 
+// ── optical mesh of the parts ticked in the Parts tab ─────────────────────────────────────
+const meshOverlay = useOpticalMeshOverlay(viewer);
+watch(() => sceneCtl.shownIds.value.join(","), () => (ws.shownParts.value = sceneCtl.shownIds.value), { immediate: true });
+/** Parts whose mesh is drawn: every shown part with the toolbar toggle on, otherwise the ones ticked in the Parts tab. */
+const meshIds = computed(() => (ws.meshAll.value ? ws.shownParts.value : ws.meshParts.value));
+let meshRequest = 0;
+watch(
+  () => [meshIds.value.join(","), viewer.modelLoaded.value] as const,
+  async ([ids, loaded]) => {
+    const req = ++meshRequest;
+    if (!ids || !loaded) {
+      meshOverlay.clear();
+      return;
+    }
+    try {
+      const mesh = await api.opticalMesh(props.id, ids.split(","));
+      if (req !== meshRequest) return;
+      const sel = ws.parts.value.filter((p) => meshIds.value.includes(p.id));
+      const thin = Math.min(...sel.map((p) => Math.min(...p.bbox[1].map((v, k) => v - p.bbox[0][k]))));
+      meshOverlay.set(mesh, Math.max(Number.isFinite(thin) ? thin * 0.002 : 0.005, 0.001));
+    } catch (e) {
+      if (req === meshRequest) alert((e as Error).message);
+    }
+  },
+);
+
 // ── live physics and the photoreal view ──────────────────────────────────────────────────
 const live = useLivePreview(ws);
 const livePanelOpen = ref(false);
-const view = reactive<PhotorealView>({ on: false, exposure: 0, ambient: 0.15, whiteBalance: false, mode: "map", resolution: 0, status: null });
+const view = reactive<PhotorealView>({ on: false, exposure: 0, ambient: 0.15, whiteBalance: false, mode: "map", resolution: 0, hiddenExits: [], status: null });
 const liveKey = computed(() => `${live.run.value?.live?.rays ?? 0}:${live.run.value?.status ?? ""}`);
 watch(
   () => live.enabled.value,
@@ -590,7 +814,7 @@ watch(
 );
 
 // ── section planes ────────────────────────────────────────────────────────────────
-const PLANE_KEY = "lightsim.planeHandle";
+const PLANE_KEY = "refract.planeHandle";
 const sectionPanelOpen = ref(false);
 const flip = reactive({ x: false, y: false, z: false });
 /** The plane handle is what you drag to move the cut; it can be hidden to see the model undisturbed. */
@@ -602,7 +826,7 @@ function setPlaneVisible(v: boolean) {
   viewer.hideCuttingPlanes(!v);
 }
 /** Cap the cut faces (default) or leave the cut open to look into the parts. Remembered between sessions. */
-const CAPS_KEY = "lightsim.sectionCaps";
+const CAPS_KEY = "refract.sectionCaps";
 function setCaps(v: boolean) {
   localStorage.setItem(CAPS_KEY, v ? "1" : "0");
   viewer.setShowSectionCaps(v);
@@ -997,6 +1221,35 @@ function openRun(rid: string) {
   activeRun.value = rid;
   resultsShown.value = true;
 }
+/** A row of the project overview: open the run here, or on its own revision (the run is opened once that revision has loaded). */
+function openOverviewRun(run: { runId: string; revisionId: string }) {
+  overviewOpen.value = false;
+  if (run.revisionId === props.id) {
+    tab.value = "results";
+    openRun(run.runId);
+  } else router.push({ path: `/r/${run.revisionId}`, query: { run: run.runId } });
+}
+// arriving from the overview with a run to open
+let openedFromQuery = false;
+watch(
+  () => [route.query.run, ws.runs.value.map((r) => `${r.id}:${r.status}`).join("|")] as const,
+  ([rid]) => {
+    if (typeof rid !== "string") {
+      openedFromQuery = false; // the query was cleared: the next link from the overview may open a run again
+      return;
+    }
+    if (openedFromQuery) return;
+    const run = ws.runs.value.find((r) => r.id === rid);
+    if (!run) return;
+    openedFromQuery = true;
+    router.replace({ path: route.path });
+    if (run.status === "ready") {
+      tab.value = "results";
+      openRun(rid);
+    }
+  },
+  { immediate: true },
+);
 function onStarted(rid: string) {
   pendingRun.value = rid;
   tab.value = "results"; // the new run shows its progress in the list of runs, and opens when it is done
@@ -1038,6 +1291,25 @@ function onResultsLoaded(result: StateResult, detector: number, vmax: number) {
   refreshOverlay();
 }
 
+/**
+ * The colour scale of the map drawn on the model for detector `di` (0 up to `vmax`). The textures and the scale legend both take it
+ * from here, so the legend always says what the colours mean. A footprint from the analysis replaces the exit map of its detector.
+ */
+function mapScaleOf(d: DetectorResult, di: number, part: ModelMap | null): MapScale {
+  if (part && part.detector === di) return { label: part.label, vmax: part.vmax, unit: part.unit };
+  const rcv = d.kind === "receiver";
+  const what = d.quantity === "luminance" ? (rcv ? "Apparent luminance" : "Luminance") : rcv ? "Illuminance" : "Exitance";
+  return { label: `${what} - ${d.name}`, vmax: (d.stats.max ?? 1) * 1.02 || 1, unit: d.unit };
+}
+/** The scales of the maps on the model, for the legend (the opened run only; the live preview has no analysis panel). */
+const mapScales = computed<MapScale[]>(() => {
+  const res = current.value?.result;
+  const sc = runScene.value;
+  if (!av.layers.showScale || !drape.value || !activeRun.value || resultsShown.value || !res || !sc || (live.enabled.value && !!live.result.value && !!live.scene.value)) return [];
+  const part = av.modelMap.value;
+  return res.detectors.flatMap((d, di) => (sc.detectors.some((x) => x.id === d.id) ? [mapScaleOf(d, di, part)] : []));
+});
+
 const LED_COLORS = [0xf97316, 0x22c55e, 0x3b82f6, 0xe11d48, 0xa855f7, 0x14b8a6, 0xeab308];
 function refreshOverlay() {
   overlay.clear();
@@ -1063,11 +1335,9 @@ function refreshOverlay() {
       const s = sc.detectors.find((x) => x.id === d.id);
       if (!s) return;
       const canvas = document.createElement("canvas");
-      if (part && part.detector === di) drawMap(canvas, part.values, null, 0, part.vmax, { flipV: false });
-      else {
-        const vmax = (d.stats.max ?? 1) * 1.02 || 1;
-        drawMap(canvas, d.map ?? d[d.quantity === "luminance" ? "luminance" : "exitance"], d.valid, 0, vmax, { flipV: false });
-      }
+      const scale = mapScaleOf(d, di, part);
+      if (part && part.detector === di) drawMap(canvas, part.values, null, 0, scale.vmax, { flipV: false });
+      else drawMap(canvas, d.map ?? d[d.quantity === "luminance" ? "luminance" : "exitance"], d.valid, 0, scale.vmax, { flipV: false });
       maps.push({ corners: s.corners, normal: s.n, canvas, mesh: s.mesh });
     });
     overlay.setMaps(maps, Math.max(diag * 0.0006, 0.01));
@@ -1078,6 +1348,20 @@ function refreshOverlay() {
     const shown = drape.value && !liveOn && activeRun.value && runScene.value ? runScene.value.detectors : null;
     const dets = shown ?? ws.check.value?.detectors ?? [];
     if (dets.length) overlay.setMapAxes(dets.map((d) => ({ corners: d.corners, normal: d.n })));
+  }
+  // a receiver detector measures what a viewer sees: a blue arrow shows where the viewer is, only while the exits are being edited (Exit tab)
+  if (tab.value === "detector") {
+    const shown = drape.value && !liveOn && activeRun.value && runScene.value ? runScene.value.detectors : null;
+    const src = shown ?? ws.check.value?.detectors ?? [];
+    const arrows = src
+      .filter((d) => d.kind === "receiver" && d.view && d.corners.length >= 4)
+      .map((d) => {
+        const c = d.corners.map((p) => new THREE.Vector3(p[0], p[1], p[2]));
+        const origin = d.origin ?? c.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / c.length).toArray();
+        const size = Math.max(c[1].distanceTo(c[0]), c[3].distanceTo(c[0])) * 0.6;
+        return { origin, view: d.view as number[], size: Math.max(size, diag * 0.05) };
+      });
+    if (arrows.length) overlay.setViewArrows(arrows);
   }
   refreshRays();
 }

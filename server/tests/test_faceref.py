@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lightsim.engine import faceref
+from refract.engine import faceref
 
 
 def _scene():

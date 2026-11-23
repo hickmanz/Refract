@@ -1,10 +1,10 @@
 import time, json, tempfile
 from pathlib import Path
 import numpy as np
-from lightsim.step_import import import_step
-from lightsim.optical_mesh import build_optical_mesh, load_optical, face_info
-from lightsim.engine.scene import build_scene
-from lightsim.engine import sources, tracer, kernels
+from refract.step_import import import_step
+from refract.optical_mesh import build_optical_mesh, load_optical, face_info
+from refract.engine.scene import build_scene
+from refract.engine import sources, tracer, kernels
 
 m = import_step(r'F:\Projects\LightSim\samples\lightbar_a.step')
 d = Path(tempfile.mkdtemp())
@@ -34,7 +34,7 @@ setup = {
 t0=time.time()
 sc = build_scene(opt, doc, setup)
 print('scene', time.time()-t0, len(sc.T), sc.warnings, [ (d.nu,d.nv,round(d.area_total,2)) for d in sc.detectors])
-from lightsim import library as lib
+from refract import library as lib
 srcs = sources.build_channel_sources(setup, doc, sc, opt, lib.get_library())
 print([s.key for s in srcs], srcs[0].flux_w, srcs[0].axis)
 for n in (2000, 50000):

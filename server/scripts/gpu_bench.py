@@ -13,11 +13,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lightsim import library as lib  # noqa: E402
-from lightsim import store  # noqa: E402
-from lightsim.engine import gpu_tracer, sources, tracer  # noqa: E402
-from lightsim.engine.scene import build_scene  # noqa: E402
-from lightsim.optical_mesh import load_optical  # noqa: E402
+from refract import library as lib  # noqa: E402
+from refract import store  # noqa: E402
+from refract.engine import gpu_tracer, sources, tracer  # noqa: E402
+from refract.engine.scene import build_scene  # noqa: E402
+from refract.optical_mesh import load_optical  # noqa: E402
 
 
 def main() -> None:

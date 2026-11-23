@@ -42,6 +42,8 @@ export interface RayStyle {
   maxBounce: number;
   /** Cut every ray at the first time it reaches the exit surface (what happens to it afterwards does not matter for the pattern). */
   stopAtExit: boolean;
+  /** The detectors (indices) that end a ray when `stopAtExit` is on; null = the first exit event of any; an empty list = none (all the detectors let the light go on). */
+  stopDets?: number[] | null;
   opacity: number;
   densityGain: number;
   focusFace: number | null;
@@ -57,7 +59,7 @@ type Viewer = any;
 
 export function useResultsOverlay(viewer: Viewer) {
   const group = new THREE.Group();
-  group.name = "lightsim-results";
+  group.name = "refract-results";
   let attached = false;
   const disposables: { dispose: () => void }[] = [];
 
@@ -105,7 +107,14 @@ export function useResultsOverlay(viewer: Viewer) {
       tex.flipY = false;
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.magFilter = THREE.NearestFilter;
-      const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, transparent: true, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6, toneMapped: false });
+      // The map is a surface like any other: depth-tested and depth-writing, drawn in the opaque pass. It only needs to win against
+      // the CAD face it lies on: the small push out along the normal (`offset`) does most of that, so the depth bias is kept tiny
+      // (a large one scales with the slope of the surface and pulled the map in front of nearby geometry).
+      // It must NOT be a transparent material: the rays, the see-through parts and the markers are transparent and do not write depth,
+      // so a transparent map is drawn after them and paints over them even where they are in front of it. In the opaque pass the map
+      // writes its depth first, and whatever lies behind it is hidden while whatever lies in front is blended on top. `alphaTest`
+      // drops texels without data so that they neither show nor hide anything.
+      const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, transparent: false, alphaTest: 0.5, depthTest: true, depthWrite: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, toneMapped: false });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.renderOrder = 12;
       mesh.raycast = () => {};
@@ -148,6 +157,29 @@ export function useResultsOverlay(viewer: Viewer) {
   }
 
   /**
+   * One blue arrow per receiver detector: from the middle of its map towards the viewer (the axis of the viewing cone), so the
+   * direction in which the reflected light is measured can be seen on the model. `size` is the length of the arrow (model units).
+   */
+  function setViewArrows(items: { origin: number[]; view: number[]; size: number }[]) {
+    attach();
+    for (const it of items) {
+      const dir = new THREE.Vector3(it.view[0], it.view[1], it.view[2]).normalize();
+      const origin = new THREE.Vector3(it.origin[0], it.origin[1], it.origin[2]);
+      const arrow = new THREE.ArrowHelper(dir, origin, it.size, 0x3b82f6, it.size * 0.22, it.size * 0.14);
+      for (const part of [arrow.line, arrow.cone] as THREE.Mesh[]) {
+        const mat = part.material as THREE.Material;
+        mat.depthTest = false;
+        mat.depthWrite = false;
+        mat.transparent = true;
+        part.renderOrder = 14;
+        part.raycast = () => {};
+        disposables.push(part.geometry, mat);
+      }
+      group.add(arrow);
+    }
+  }
+
+  /**
    * Replayed rays with a colour per segment. A segment runs from vertex k to vertex k+1 of a path; the colour comes from the
    * weight, the bounce number, the event at its end, the surface it left or the LED. `focusFace` colours the segments that
    * arrive at / leave that CAD face and greys out the rest. `maxBounce` draws only the first segments of every ray (0 = all).
@@ -176,7 +208,10 @@ export function useResultsOverlay(viewer: Viewer) {
       const m = p.points.length;
       let last = style.maxBounce > 0 ? Math.min(m - 1, style.maxBounce) : m - 1;
       if (style.stopAtExit) {
-        const at = p.event.indexOf(8); // EV_EXIT
+        // EV_EXIT = 8. A ray that passes one detector can arrive at another later: cut it at the detectors that count here.
+        // (a list of detectors that end the ray: a ray that arrives only on detectors that let the light go on is drawn to its end)
+        const dets = style.stopDets;
+        const at = dets && p.det ? p.event.findIndex((e, i) => e === 8 && dets.includes(p.det![i])) : p.event.indexOf(8);
         if (at > 0) last = Math.min(last, at);
       }
       for (let k = 0; k < last; k++) {
@@ -340,5 +375,5 @@ export function useResultsOverlay(viewer: Viewer) {
     group.removeFromParent();
   });
 
-  return { clear, clearRays, setMaps, setMapAxes, setRays, setLedMarkers, setSlice, clearSlice };
+  return { clear, clearRays, setMaps, setMapAxes, setViewArrows, setRays, setLedMarkers, setSlice, clearSlice };
 }

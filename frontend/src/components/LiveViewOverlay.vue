@@ -28,6 +28,8 @@ const props = defineProps<{
   resolution: number;
   /** The state (which LEDs are on) to draw; empty for the first one. */
   state: string;
+  /** Exit surfaces (detector indices) left dark in the picture; they do not take part in its exposure either. */
+  hiddenExits: number[];
 }>();
 const emit = defineEmits<{
   status: [s: { state: "starting" | "waiting" | "live" | "error"; message: string; spp: number; ms: number; variant: string; fps: number }];
@@ -115,7 +117,7 @@ async function loop(my: number) {
       continue;
     }
     const resultKey = props.resultKey;
-    const vk = `${props.exposure}|${props.ambient}|${props.whiteBalance}|${props.mode}|${props.resolution}|${props.state}`;
+    const vk = `${props.exposure}|${props.ambient}|${props.whiteBalance}|${props.mode}|${props.resolution}|${props.state}|${props.hiddenExits.join(",")}`;
     if (vk !== lastView) {
       lastView = vk;
       lastSpp = 0;
@@ -158,6 +160,7 @@ async function loop(my: number) {
           white_balance: props.whiteBalance,
           mode: props.mode,
           state: props.state || null,
+          hidden_exits: props.hiddenExits,
         },
         abort.signal,
       );

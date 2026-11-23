@@ -4,21 +4,21 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
-#define AppName "LightSim"
-#define AppExe "LightSim.exe"
+#define AppName "Refract"
+#define AppExe "Refract.exe"
 
 [Setup]
 ; Never change this id: it is how an update recognises the installed copy and replaces it.
 AppId={{6C1E7A52-0B84-4D3E-9F5A-2B7D1C8A4E91}
 AppName={#AppName}
 AppVersion={#AppVersion}
-DefaultDirName={localappdata}\Programs\LightSim
+DefaultDirName={localappdata}\Programs\Refract
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist-installer
-OutputBaseFilename=LightSim-Setup-{#AppVersion}
+OutputBaseFilename=Refract-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -31,7 +31,7 @@ RestartApplications=no
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
 
 [Files]
-Source: "..\dist\LightSim\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\dist\Refract\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

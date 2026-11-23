@@ -45,6 +45,19 @@ export function partPattern(inst: PartDoc, all: PartDoc[]): string {
   return segs.length > 1 ? `*/${esc(segs.slice(1).join("/"))}` : esc(inst.path);
 }
 
+/** An opaque surface material (colour + reflectances) as opposed to a volume material (index, absorption, scattering). */
+export function isSurfaceMaterial(doc: { mode?: string } | null | undefined): boolean {
+  return doc?.mode === "surface";
+}
+
+/** Is this material id a volume (transparent, diffusing or translucent) material in the library? */
+export function isVolumeMaterial(lib: { materials: Record<string, { mode?: string }> } | null | undefined, id: string | null | undefined): boolean {
+  return !!id && !!lib?.materials[id] && !isSurfaceMaterial(lib.materials[id]);
+}
+
+/** A face override value that stands for an opaque surface material rather than a finish. */
+export const MAT_PREFIX = "mat:";
+
 export interface EffectivePart {
   enabled: boolean;
   material: string | null;

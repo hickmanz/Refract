@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from lightsim import library as lib
-from lightsim.engine import spectral
-from lightsim.materials import mie
+from refract import library as lib
+from refract.engine import spectral
+from refract.materials import mie
 
 
 def _i550() -> int:
@@ -36,7 +36,7 @@ def test_presets_share_the_realistic_defaults_and_cover_low_loadings():
     mats = lib.BUILTIN_MATERIALS
     loads = {}
     for id_, m in mats.items():
-        sc = m["scattering"]
+        sc = m.get("scattering") or {"type": "none"}  # opaque surface materials have no volume scattering
         if sc["type"] != "mie":
             continue
         assert sc["diameter_um"] == mie.DEFAULT_DIAMETER_UM

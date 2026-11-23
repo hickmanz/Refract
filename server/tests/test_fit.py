@@ -2,7 +2,7 @@
 
 import pytest
 
-from lightsim.materials import fit
+from refract.materials import fit
 
 
 def test_clear_slab_transmission_matches_fresnel():

@@ -17,8 +17,13 @@ export interface RevisionMeta {
   status: JobStatus;
   error?: string | null;
   model_ready?: boolean;
+  meshQuality?: MeshQuality;
+  /** set on a revision made by "Re-mesh": the revision it was meshed again from */
+  remeshedFrom?: string;
   projectId: string;
   variantId?: string;
+  /** Rev N within its variant; a re-mesh has none */
+  number?: number;
   instances?: number;
   triangles?: number;
   started?: number;
@@ -27,11 +32,20 @@ export interface RevisionMeta {
   progress: Progress;
 }
 
-/** A design alternative of a project (other LED pitch, reflector, light pipe...): its own setup and revisions. */
+/** A design of a project (baseline, dome reflector...). It only groups variants; nothing else is shared between its variants. */
+export interface Design {
+  id: string;
+  name: string;
+  created: number;
+}
+
+/** One variant of a design (a diffuser thickness, another LED or material choice...): its own setup and revisions. */
 export interface Variant {
   id: string;
   name: string;
   created: number;
+  designId: string;
+  /** ids of this variant's revisions, oldest first (derived by the server) */
   revisions: string[];
   latest: RevisionMeta | null;
 }
@@ -43,6 +57,7 @@ export interface Project {
   created: number;
   lastOpened: number;
   revisions: string[];
+  designs: Design[];
   variants: Variant[];
   latest: RevisionMeta | null;
   revisionList?: RevisionMeta[];
@@ -56,17 +71,31 @@ export interface PartDoc {
   name: string;
   partName?: string;
   faceCount: number;
+  triCount?: number;
+  /** chordal deflection this part was meshed with, mm (imports before per-part meshing: absent) */
+  deflection?: number;
   closed: boolean;
   volume: number;
   area: number;
   bbox: number[][];
   notes?: string[];
 }
+export type MeshQuality = "coarse" | "normal" | "fine";
 export interface PartsDoc {
   instances: PartDoc[];
   warnings: string[];
   diagonal: number;
   triangles: number;
+  deflection?: number;
+  angular?: number;
+  quality?: MeshQuality;
+}
+/** The optical mesh of some parts: world coordinates (mm) and, per triangle, the largest angle in degrees between its
+ *  flat normal and the smoothed normals at its corners (0 on flat faces). */
+export interface OpticalMesh {
+  positions: Float32Array;
+  indices: Uint32Array;
+  facetDeg: Float32Array;
 }
 export interface FaceInfo {
   centroid: number[];
@@ -126,6 +155,17 @@ export interface DetectorDef {
   /** Mirror the map left-right (the red arrow) / top-bottom (the green arrow). */
   flip_u?: boolean;
   flip_v?: boolean;
+  /**
+   * `exit` (default, also when absent): light leaving a transmissive part (the light pipe) through the faces.
+   * `receiver`: light arriving on the faces (for example a table lit by the pipe), as illuminance, and the light the surface
+   * reflects towards a viewer, as luminance. The faces may belong to an opaque part.
+   */
+  type?: "exit" | "receiver";
+  /** Exit surface only: measure the light leaving through the faces but let it go on (to a table, another detector) instead of ending the ray there. */
+  pass_through?: boolean;
+  /** Receiver: where the viewer is. Elevation above the surface plane in degrees (90 = straight above), azimuth in the map plane (0 = along the red arrow, 90 = along the green one). */
+  view_el?: number;
+  view_az?: number;
 }
 export interface StateDef {
   id: string;
@@ -159,8 +199,19 @@ export interface MaterialDoc {
   id: string;
   name: string;
   builtin?: boolean;
+  /**
+   * `surface`: an opaque material (colour, diffuse and gloss reflectance, nothing enters it); missing or `volume`: a body with
+   * a refractive index, absorption and scattering (clear, diffusing or translucent parts).
+   */
+  mode?: "volume" | "surface";
   n: Curve;
   absorption: Curve;
+  /** Surface mode: colour as #rrggbb (empty = neutral grey), diffuse / gloss reflectance, default gloss roughness. */
+  color?: string;
+  tint_specular?: boolean;
+  rdiff?: number;
+  rspec?: number;
+  sigma?: number;
   scattering?: { type: string; [k: string]: unknown };
   notes?: string;
 }
@@ -168,7 +219,10 @@ export interface FinishDoc {
   id: string;
   name: string;
   builtin?: boolean;
-  type: "dielectric" | "opaque";
+  /** `dielectric` and `texture` are roughness only; `opaque` is a bundled surface preset (colour, reflectances, roughness). */
+  type: "dielectric" | "opaque" | "texture";
+  /** Texture: keep the roughness of the material instead of overriding it. */
+  inherit?: boolean;
   sigma?: number;
   rdiff?: number;
   rspec?: number;
@@ -217,7 +271,7 @@ export interface CheckResult {
   ok: boolean;
   warnings: string[];
   bodies: { path: string; material: string | null; finish: string; transparent: boolean }[];
-  detectors: { id: string; name: string; nu: number; nv: number; areaMm2: number; corners: number[][]; n: number[] }[];
+  detectors: { id: string; name: string; nu: number; nv: number; areaMm2: number; corners: number[][]; n: number[]; kind?: "exit" | "receiver"; view?: number[]; origin?: number[] }[];
   channels: { key: string; led: string; channel: string; fluxLm: number; origin: number[]; axis: number[]; startBody: number | null; ex?: number[]; ey?: number[]; size?: number[] }[];
   triangles: number;
   resolved: { detectors: Record<string, { instance: string; face: number }[]>; leds: Record<string, { instance: string; face: number }> };
@@ -263,8 +317,11 @@ export interface RunSummaryState {
     minOverMax: number | null;
     cv: number | null;
     maxDuv: number | null;
+    cct?: number | null;
     hotspots: number;
   }[];
+  /** Where the emitted light went (fractions of the emitted flux). Absent in runs saved before it was recorded. */
+  loss?: { name: string; kind: "exit" | "absorbed" | "escaped" | "error" | "noise"; fraction: number }[];
 }
 export interface RenderSettings {
   state?: string;
@@ -273,10 +330,14 @@ export interface RenderSettings {
   spp: number;
   azimuth: number;
   elevation: number;
+  /** The exit surface / receiver (index in the setup) the camera looks at. */
+  detector?: number;
   zoom: number;
   exposure: number;
   ambient?: number;
   white_balance: boolean;
+  /** Exit surfaces (indices in the setup) left dark in the picture; empty or missing draws all of them. */
+  hidden_exits?: number[];
 }
 export interface RenderState {
   available: boolean;
@@ -315,6 +376,8 @@ export interface RunMeta {
   /** The solver that traced the run, and the GPU's name when it was the GPU. */
   solver?: "cpu" | "gpu";
   solverName?: string;
+  /** The optical mesh the rays were traced against. */
+  mesh?: { quality: MeshQuality; triangles: number };
   raysTraced?: number;
   /** Median relative noise per map pixel when the run stopped at a noise target. */
   mapNoise?: number;
@@ -352,6 +415,8 @@ export interface LiveFrameRequest {
   state?: string | null;
   white_balance?: boolean;
   mode?: "map" | "transport";
+  /** Exit surfaces (indices in the setup) left dark in the picture (map mode). */
+  hidden_exits?: number[];
 }
 export type LiveFrame =
   | { kind: "image"; blob: Blob; spp: number; rays: number; ms: number; variant: string }
@@ -420,9 +485,17 @@ export interface DetectorResult {
   tracedConeDeg?: number;
   /** The smallest and largest cone angle that can be shown without tracing again; null/absent for runs made before the angle rings existed. */
   coneRange?: [number, number] | null;
+  /** Light through the exit surface; for a receiver, the light that arrives on it (a ray that comes back counts again). */
   exitLm: number;
   efficiency: number;
   efficiencyRadiometric: number;
+  /** `exit` for a normal exit surface (absent in runs made before receivers existed). */
+  kind?: "exit" | "receiver";
+  /** Receiver only: unit vector towards the viewer, its elevation above the surface (deg) and the luminous flux sent into the viewing cone (lm, traced cone). */
+  viewDir?: number[];
+  viewElevationDeg?: number;
+  reflectedLm?: number;
+  /** "luminance" (viewing cone) or "exitance" (all directions: illuminance for a receiver). */
   quantity: "luminance" | "exitance";
   unit: string;
   luminance: number[][];
@@ -477,11 +550,58 @@ export interface StateResult {
 }
 export interface RunScene {
   bodies: { index: number; path: string; name: string; material: string | null; finish: string; transparent: boolean }[];
-  detectors: { id: string; name: string; origin: number[]; u: number[]; v: number[]; n: number[]; ext: number[]; nu: number; nv: number; corners: number[][]; cone_deg: number; area_total: number; mode?: number; mesh?: { positions: number[]; normals: number[]; uv: number[] } }[];
+  detectors: { id: string; name: string; origin: number[]; u: number[]; v: number[]; n: number[]; ext: number[]; nu: number; nv: number; corners: number[][]; cone_deg: number; area_total: number; mode?: number; kind?: "exit" | "receiver"; view?: number[]; view_cos?: number; mesh?: { positions: number[]; normals: number[]; uv: number[] } }[];
   channels: StateResult["channels"];
   states: { id: string; name: string; drive: Record<string, number> }[];
   warnings: string[];
   settings: RunSettings;
+}
+/** A finish as the run's library snapshot defined it. */
+export interface FinishInfo {
+  id: string;
+  name: string;
+  builtin: boolean;
+  type: string;
+  sigma: number;
+  notes: string;
+  rdiff?: number;
+  rspec?: number;
+  color?: string | null;
+  inherit?: boolean;
+}
+/** A material as the run's library snapshot defined it (numbers at 550 nm where they depend on the wavelength). */
+export interface MaterialInfo {
+  id: string;
+  name: string;
+  builtin: boolean;
+  notes: string;
+  kind: "volume" | "surface";
+  // surface material
+  rdiff?: number;
+  rspec?: number;
+  sigma?: number;
+  color?: string | null;
+  tintSpecular?: boolean;
+  // volume material
+  n550?: number;
+  nCurve?: string;
+  absorption550?: number;
+  scattering?: { type: string; mus550?: number; g550?: number; tio2_wt_pct?: number; diameter_um?: number; sigma_g?: number; efficiency?: number; host?: string };
+}
+export interface PartInfo {
+  index: number;
+  path: string;
+  name: string;
+  kind: "volume" | "surface" | "opaque";
+  material: { id: string; name: string; properties: MaterialInfo | null } | null;
+  finish: { id: string; name: string; properties: FinishInfo | null };
+  faceOverrides: { face: number | string; finish: string; name: string; applied: boolean; properties: FinishInfo | null }[];
+  absorbed: { volume: number; surface: number };
+}
+export interface RunParts {
+  state: string;
+  parts: PartInfo[];
+  excluded: { path: string; name: string }[];
 }
 export interface RayPath {
   led: string;
@@ -606,6 +726,7 @@ export interface Guidance {
 }
 export interface RaysFilter {
   led?: string;
+  detector?: number; // only the light that reached this exit surface / receiver (index in the setup)
   region?: { detector: number; polygon: number[][] };
   lastGroup?: number;
   touched?: number | number[]; // several: the rays have to touch all of these groups
@@ -635,11 +756,14 @@ export interface AnalysisRayPath {
   group: number[];
   event: number[];
   w: number[];
+  /** For an "exit" event: the detector (index) the ray arrived on, else -1. */
+  det?: number[];
 }
 export interface RaysResponse {
   paths: AnalysisRayPath[];
   matched: number;
   fluxFraction: number;
+  detectors?: { id: string; name: string; kind: "exit" | "receiver"; through?: boolean }[];
   events: string[];
 }
 export interface SliceRequest {
@@ -695,6 +819,7 @@ export interface ProjectCompareRun extends Partial<CompareBrief> {
   revision?: string;
   variantId?: string;
   variant?: string;
+  design?: string;
   created?: number;
   detectorName?: string;
   quantityUnit?: string;
@@ -707,6 +832,33 @@ export interface ProjectCompareRun extends Partial<CompareBrief> {
 export interface ProjectCompare {
   unit: string | null;
   runs: ProjectCompareRun[];
+}
+
+/** One finished run in the project overview, with the summary stored in the run. */
+export interface OverviewRun {
+  runId: string;
+  name?: string;
+  created?: number;
+  revisionId: string;
+  revision: string;
+  variantId?: string;
+  variant?: string;
+  designId?: string;
+  design?: string;
+  summary?: { states: RunSummaryState[] } | null;
+  mapNoise?: number | null;
+  raysTraced?: number | null;
+  rays?: number | null;
+  seed?: number | null;
+  solver?: "cpu" | "gpu" | null;
+  mesh?: { quality: MeshQuality; triangles: number | null };
+  sweep?: SweepInfo | null;
+  maxAccountingError?: number | null;
+}
+export interface ProjectOverview {
+  designs: { id: string; name: string }[];
+  variants: { id: string; name: string; designId?: string }[];
+  runs: OverviewRun[];
 }
 
 export interface ReconcileResult {
@@ -850,28 +1002,51 @@ export const api = {
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
   renameProject: (id: string, name: string) => request<Project>(`/api/projects/${id}`, jsonInit("PATCH", { name })),
   deleteProject: (id: string) => request<{ ok: boolean }>(`/api/projects/${id}`, { method: "DELETE" }),
-  getSetup: (pid: string) => request<Setup>(`/api/projects/${pid}/setup`),
-  putSetup: (pid: string, setup: Setup) => request<Setup>(`/api/projects/${pid}/setup`, jsonInit("PUT", setup)),
 
-  // variants (design alternatives with their own setup)
+  // designs (they group variants) and variants (each with its own setup and revisions)
+  createDesign: (pid: string, body: { name?: string; variantName?: string; copyFrom?: string }) => post<Project>(`/api/projects/${pid}/designs`, body),
+  renameDesign: (pid: string, did: string, name: string) => request<Project>(`/api/projects/${pid}/designs/${did}`, jsonInit("PATCH", { name })),
+  deleteDesign: (pid: string, did: string) => request<Project>(`/api/projects/${pid}/designs/${did}`, { method: "DELETE" }),
   getVariantSetup: (pid: string, vid: string) => request<Setup>(`/api/projects/${pid}/variants/${vid}/setup`),
   putVariantSetup: (pid: string, vid: string, setup: Setup) => request<Setup>(`/api/projects/${pid}/variants/${vid}/setup`, jsonInit("PUT", setup)),
-  createVariant: (pid: string, body: { name?: string; copyFrom?: string }) => post<Project>(`/api/projects/${pid}/variants`, body),
+  createVariant: (pid: string, body: { name?: string; designId?: string; copyFrom?: string }) => post<Project>(`/api/projects/${pid}/variants`, body),
   renameVariant: (pid: string, vid: string, name: string) => request<Project>(`/api/projects/${pid}/variants/${vid}`, jsonInit("PATCH", { name })),
+  moveVariant: (pid: string, vid: string, designId: string) => request<Project>(`/api/projects/${pid}/variants/${vid}`, jsonInit("PATCH", { designId })),
   deleteVariant: (pid: string, vid: string) => request<Project>(`/api/projects/${pid}/variants/${vid}`, { method: "DELETE" }),
+  projectOverview: (pid: string) => request<ProjectOverview>(`/api/projects/${pid}/overview`),
   compareRuns: (pid: string, runs: string[], opts: { state?: string; detector?: number; analysis?: Analysis }) =>
     request<ProjectCompare>(`/api/projects/${pid}/compare${query({ runs: runs.join(","), state: opts.state, detector: opts.detector, ...analysisParams(opts.analysis) })}`),
 
   // revisions
-  upload: (file: File, target?: { projectId?: string; projectName?: string; variantId?: string; variantName?: string; copySetupFrom?: string }) => {
+  upload: (file: File, target?: { projectId?: string; projectName?: string; variantId?: string; variantName?: string; copySetupFrom?: string; designId?: string; designName?: string; meshQuality?: MeshQuality }) => {
     const form = new FormData();
     form.append("file", file);
+    if (target?.meshQuality) form.append("mesh_quality", target.meshQuality);
     if (target?.projectId) form.append("project_id", target.projectId);
     if (target?.projectName) form.append("project_name", target.projectName);
     if (target?.variantId) form.append("variant_id", target.variantId);
     if (target?.variantName) form.append("variant_name", target.variantName);
     if (target?.copySetupFrom) form.append("copy_setup_from", target.copySetupFrom);
+    if (target?.designId) form.append("design_id", target.designId);
+    if (target?.designName) form.append("design_name", target.designName);
     return request<{ id: string; projectId: string }>("/api/revisions", { method: "POST", body: form });
+  },
+  /** Add a variant to the revision's design with the same CAD (no upload) and a copy of its setup; the new revision is imported again. */
+  duplicateRevision: (id: string, name?: string) => post<{ id: string; projectId: string; variantId: string }>(`/api/revisions/${id}/duplicate`, { name }),
+  remesh: (id: string, quality: MeshQuality) => post<{ id: string; projectId: string }>(`/api/revisions/${id}/remesh`, { quality }),
+  /** Binary layout: uint32 nverts, uint32 ntris, float32[nverts*3] positions, uint32[ntris*3] indices, float32[ntris] facet angles. */
+  opticalMesh: async (id: string, instanceIds: string[]): Promise<OpticalMesh> => {
+    const res = await fetch(`/api/revisions/${id}/optical-mesh?instances=${encodeURIComponent(instanceIds.join(","))}`);
+    if (!res.ok) throw new ApiError(res.statusText, res.status);
+    const buf = await res.arrayBuffer();
+    const [nv, nt] = new Uint32Array(buf, 0, 2);
+    let at = 8;
+    const positions = new Float32Array(buf, at, nv * 3);
+    at += nv * 12;
+    const indices = new Uint32Array(buf, at, nt * 3);
+    at += nt * 12;
+    const facetDeg = new Float32Array(buf, at, nt);
+    return { positions, indices, facetDeg };
   },
   getRevision: (id: string) => request<RevisionMeta>(`/api/revisions/${id}`),
   labelRevision: (id: string, label: string) => request<RevisionMeta>(`/api/revisions/${id}`, jsonInit("PATCH", { label })),
@@ -904,6 +1079,7 @@ export const api = {
   results: (id: string, state?: string, analysis?: Analysis, ledMaps = true) =>
     request<StateResult>(`/api/runs/${id}/results${query({ state, ...analysisParams(analysis), led_maps: ledMaps })}`),
   runScene: (id: string) => request<RunScene>(`/api/runs/${id}/scene`),
+  runParts: (id: string, state?: string) => request<RunParts>(`/api/runs/${id}/parts${query({ state })}`),
   paths: (id: string) => request<{ paths: RayPath[] }>(`/api/runs/${id}/paths`),
 
   // light path analysis of a run

@@ -110,7 +110,7 @@ const toggleOpen = (g: AnalysisGroupDef) => (open[g.id] = !isOpen(g));
 const allOpen = computed(() => groups.value.filter((g) => g.faces.length).every((g) => isOpen(g)));
 const setAll = (on: boolean) => groups.value.forEach((g) => (open[g.id] = on));
 
-// faces that a group points to but the model does not have (typically after importing a new STEP variant)
+// faces that a group points to but the model does not have (typically after importing a new STEP revision or variant)
 const issueCount = (g: AnalysisGroupDef) => ws.issuesFor(g.id).length;
 const issueTitle = (g: AnalysisGroupDef) => {
   const n = issueCount(g);

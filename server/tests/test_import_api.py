@@ -10,7 +10,7 @@ from conftest import SAMPLES
 
 @pytest.fixture(scope="module")
 def client():
-    from lightsim.app import app
+    from refract.app import app
 
     return TestClient(app)
 

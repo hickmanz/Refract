@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import test_engine_physics as P
-from lightsim.engine import solvers, tracer
+from refract.engine import solvers, tracer
 from test_map_noise import _plate_scene
 
 _ok, _why = solvers.gpu_status()
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(not _ok, reason=f"no usable GPU solver: {_why}")
 @pytest.fixture
 def on_gpu(monkeypatch):
     """Every ``tracer.trace_channel`` call of the physics tests is served by the GPU solver."""
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     monkeypatch.setattr(P.tracer, "trace_channel", gpu_tracer.trace_channel)
 
@@ -42,7 +42,7 @@ def test_volume_scattering_on_the_gpu(on_gpu, mus, g, mua, thickness):
 
 def test_gpu_and_cpu_agree_on_the_exit_map():
     """Independent random streams (different seeds): totals agree within noise and the per-pixel difference is statistical."""
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _plate_scene(res=24)
     det = scene.detectors[0]
@@ -65,7 +65,7 @@ def test_gpu_and_cpu_agree_on_the_exit_map():
 
 def test_gpu_angle_rings_agree_with_the_cpu_solver():
     """The rings around the viewing cone (another cone angle without tracing again) from the GPU against the CPU solver."""
-    from lightsim.engine import gpu_tracer, kernels
+    from refract.engine import gpu_tracer, kernels
 
     scene, src = _plate_scene(res=24, cone=30)
     det = scene.detectors[0]
@@ -82,7 +82,7 @@ def test_gpu_angle_rings_agree_with_the_cpu_solver():
 
 
 def test_gpu_noise_falls_as_one_over_sqrt_of_the_rays():
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _plate_scene(res=24)
     det = scene.detectors[0]
@@ -100,7 +100,7 @@ def test_gpu_noise_falls_as_one_over_sqrt_of_the_rays():
 
 def test_gpu_passes_continue_one_stream():
     """Tracing rays 0..N and then N..2N gives the same totals as one pass over 0..2N (rays depend on their number only)."""
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _plate_scene(res=16)
     one = gpu_tracer.trace_channel(scene, src, 200_000, seed=9)
@@ -111,7 +111,7 @@ def test_gpu_passes_continue_one_stream():
 
 
 def test_gpu_serves_preview_paths():
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _plate_scene(res=16)
     t = gpu_tracer.trace_channel(scene, src, 20_000, seed=3, record_paths=4)
@@ -125,7 +125,7 @@ def _analysis_scene():
 
 
 def test_gpu_analysis_does_not_change_the_physics():
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _analysis_scene()
     plain = gpu_tracer.trace_channel(scene, src, 100_000, seed=5)
@@ -137,7 +137,7 @@ def test_gpu_analysis_does_not_change_the_physics():
 
 def test_gpu_analysis_agrees_with_the_cpu_analysis():
     """Independent random streams: the face tables, the coarse group maps and the logs agree within noise."""
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _analysis_scene()
     n = 400_000
@@ -161,7 +161,7 @@ def test_gpu_analysis_agrees_with_the_cpu_analysis():
 
 
 def test_gpu_analysis_log_stops_at_log_rays_but_tables_do_not():
-    from lightsim.engine import gpu_tracer
+    from refract.engine import gpu_tracer
 
     scene, src = _analysis_scene()
     a = gpu_tracer.trace_channel(scene, src, 60_000, seed=2, analysis=True, log_rays=60_000).analysis
@@ -171,7 +171,7 @@ def test_gpu_analysis_log_stops_at_log_rays_but_tables_do_not():
 
 
 def test_gpu_replay_reproduces_the_logged_rays():
-    from lightsim.engine import gpu_tracer, kernels, replay
+    from refract.engine import gpu_tracer, kernels, replay
 
     scene, src = _analysis_scene()
     n = 100_000
@@ -188,8 +188,8 @@ def test_gpu_replay_reproduces_the_logged_rays():
 
 
 def test_gpu_passes_merge_their_analysis():
-    from lightsim.engine import gpu_tracer
-    from lightsim import simrun
+    from refract.engine import gpu_tracer
+    from refract import simrun
 
     scene, src = _analysis_scene()
     one = gpu_tracer.trace_channel(scene, src, 80_000, seed=4, analysis=True, log_rays=80_000).analysis
@@ -199,3 +199,82 @@ def test_gpu_passes_merge_their_analysis():
     assert np.allclose(a.face_t, one.face_t, rtol=1e-5, atol=1e-9)
     assert np.allclose(a.grp_map, one.grp_map, rtol=1e-5, atol=1e-9)
     assert len(a.end["rid"]) == len(one.end["rid"]) == 80_000
+
+def _receiver_scene(**kw):
+    import test_receiver as R
+    from refract.engine import sources
+    from refract.engine.scene import build_scene
+
+    b, setup = R._table(**kw)
+    opt, doc = b.finish()
+    scene = build_scene(opt, doc, setup, P.library_with())
+    src = sources.build_channel_sources(setup, doc, scene, opt, P.library_with())[0]
+    return scene, src
+
+
+@pytest.mark.parametrize("finish", ["white_diffuse", "mirror"])
+def test_gpu_and_cpu_agree_on_a_receiver(finish):
+    """The receiver tallies (incident map, reflected cone and rings about the view direction) from the GPU against the CPU solver."""
+    from refract.engine import gpu_tracer, kernels
+
+    scene, src = _receiver_scene(finish=finish, el=60.0, cone=25.0, res=24)
+    det = scene.detectors[0]
+    sl = slice(det.offset, det.offset + det.nu * det.nv)
+    n = 400_000
+    g = gpu_tracer.trace_channel(scene, src, n, seed=101)
+    c = tracer.trace_channel(scene, src, n, seed=202)
+    assert g.total_accounted() == pytest.approx(n, rel=1e-6)
+    assert g.det_pow[0] == 0.0 and g.rcv_pow[0] > 0
+    assert g.rcv_pow[0] == pytest.approx(c.rcv_pow[0], rel=0.01)
+    assert g.ex[sl, 1].sum() == pytest.approx(c.ex[sl, 1].sum(), rel=0.01)
+    assert g.cone[sl, 1].sum() == pytest.approx(c.cone[sl, 1].sum(), rel=0.03)
+    for r in range(kernels.NRING):
+        assert g.ring[sl, r].sum() == pytest.approx(c.ring[sl, r].sum(), rel=0.05, abs=0.002 * c.ex[sl, 1].sum()), r
+    assert g.dirh.sum() == pytest.approx(c.dirh.sum(), rel=0.01)
+
+
+def test_gpu_analysis_of_a_receiver():
+    """Incident light of a receiver is a deposit of the analysis: the maps, the logs and the replayed paths all count it, on both solvers."""
+    from refract.engine import gpu_tracer, kernels, replay
+
+    scene, src = _receiver_scene(el=45.0, cone=20.0, res=16)
+    n = 100_000
+    g = gpu_tracer.trace_channel(scene, src, n, seed=7, analysis=True, log_rays=n)
+    c = tracer.trace_channel(scene, src, n, seed=8, analysis=True, log_rays=n)
+    ga, ca = g.analysis, c.analysis
+    for view in (0, 1):
+        assert ga.tot_map[view].sum() == pytest.approx(ca.tot_map[view].sum(), rel=0.03), view
+    assert ga.tot_map[0].sum() == pytest.approx(g.ex[:, 1].sum(), rel=1e-4)  # the all-directions map is the incident map
+    assert ga.tot_map[1].sum() == pytest.approx(g.cone[:, 1].sum(), rel=1e-4)  # ... and the cone map is the reflected cone
+    assert len(ga.dep["rid"]) == pytest.approx(len(ca.dep["rid"]), rel=0.02)
+    dep = ga.dep
+    ids = np.unique(dep["rid"])[:40]
+    cnt = np.bincount(dep["rid"], minlength=n)
+    for r in replay.replay(scene, src, 7, ids, solver="gpu"):
+        assert r["event"].count(kernels.EV_EXIT) == cnt[r["id"]]
+
+
+def test_gpu_and_cpu_agree_on_a_pass_through_exit():
+    """An exit surface that lets the light go on: its own map, the light that reaches the table behind it, and the analysis log."""
+    import test_receiver as R
+    from refract.engine import gpu_tracer, sources
+    from refract.engine.scene import build_scene
+
+    lib_ = P.library_with(glass={"n": 1.5, "absorption": 0.0})
+    b, setup = R._plate_over_table(True)
+    opt, doc = b.finish()
+    scene = build_scene(opt, doc, setup, lib_)
+    src = sources.build_channel_sources(setup, doc, scene, opt, lib_)[0]
+    n = 400_000
+    g = gpu_tracer.trace_channel(scene, src, n, seed=31, analysis=True, log_rays=n)
+    c = tracer.trace_channel(scene, src, n, seed=32, analysis=True, log_rays=n)
+    assert g.det_pow.sum() == 0.0 and g.total_accounted() == pytest.approx(n, rel=1e-6)
+    assert g.rcv_pow[0] == pytest.approx(c.rcv_pow[0], rel=0.01)
+    assert g.rcv_pow[1] == pytest.approx(c.rcv_pow[1], rel=0.02)
+    d0, d1 = scene.detectors
+    s0, s1 = slice(d0.offset, d0.offset + d0.nu * d0.nv), slice(d1.offset, d1.offset + d1.nu * d1.nv)
+    assert g.ex[s0, 1].sum() == pytest.approx(c.ex[s0, 1].sum(), rel=0.01)
+    assert g.ex[s1, 1].sum() == pytest.approx(c.ex[s1, 1].sum(), rel=0.02)
+    assert g.cone[s1, 1].sum() == pytest.approx(c.cone[s1, 1].sum(), rel=0.03)
+    assert len(g.analysis.dep["rid"]) == pytest.approx(len(c.analysis.dep["rid"]), rel=0.02)
+    assert g.analysis.tot_map[0].sum() == pytest.approx(g.ex[:, 1].sum(), rel=1e-4)

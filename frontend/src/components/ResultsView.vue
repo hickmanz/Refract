@@ -8,16 +8,16 @@
         </select>
       </label>
       <label v-if="(result?.detectors.length ?? 0) > 1" class="mini inline">
-        <span>Exit surface</span>
+        <span>{{ allReceivers ? "Receiver" : anyReceiver ? "Detector" : "Exit surface" }}</span>
         <select v-model.number="detIdx">
           <option v-for="(d, i) in result?.detectors ?? []" :key="d.id" :value="i">{{ d.name }}</option>
         </select>
       </label>
-      <label class="mini inline" title="Luminance inside the viewing cone, or exitance into all directions">
+      <label class="mini inline" :title="isRcv ? 'Apparent luminance toward the viewer (the light the surface reflects into the viewing cone), or the illuminance that arrives on the surface' : 'Luminance inside the viewing cone, or exitance into all directions'">
         <span>Quantity</span>
         <select v-model="analysis.view">
-          <option value="cone">Luminance (viewing cone)</option>
-          <option value="all">Exitance (all directions)</option>
+          <option value="cone">{{ isRcv ? "Apparent luminance (toward viewer)" : "Luminance (viewing cone)" }}</option>
+          <option value="all">{{ isRcv ? "Illuminance (arriving light)" : "Exitance (all directions)" }}</option>
         </select>
       </label>
       <label v-if="analysis.view === 'cone' && det" class="mini inline cone-ctl" :title="coneTitle">
@@ -59,12 +59,13 @@
       <div class="kpis">
         <div class="kpi big">
           <div class="kpi-val">{{ fmtPct(det.efficiency) }}</div>
-          <div class="kpi-label">Efficiency</div>
-          <div class="kpi-sub">{{ fmtNum(det.exitLm) }} lm out of {{ fmtNum(result.emitted.lm) }} lm emitted</div>
+          <div class="kpi-label">{{ isRcv ? "Arriving on the receiver" : "Efficiency" }}</div>
+          <div v-if="isRcv" class="kpi-sub">{{ fmtNum(det.exitLm) }} lm out of {{ fmtNum(result.emitted.lm) }} lm emitted (light that comes back counts again) · {{ fmtNum(det.reflectedLm ?? 0) }} lm reflected toward the viewer</div>
+          <div v-else class="kpi-sub">{{ fmtNum(det.exitLm) }} lm out of {{ fmtNum(result.emitted.lm) }} lm emitted</div>
         </div>
         <div class="kpi">
           <div class="kpi-val">{{ fmtNum(det.stats.mean) }}</div>
-          <div class="kpi-label">Average {{ det.quantity }} <span class="muted">{{ det.unit }}</span></div>
+          <div class="kpi-label">Average {{ isRcv && det.quantity === "exitance" ? "illuminance" : det.quantity }} <span class="muted">{{ det.unit }}</span></div>
           <div class="kpi-sub">max {{ fmtNum(det.stats.max) }} · min {{ fmtNum(det.stats.min) }}</div>
         </div>
         <div class="kpi">
@@ -91,7 +92,7 @@
       <!-- maps -->
       <section class="res-card">
         <HeatMap
-          :title="`${det.quantity === 'luminance' ? 'Luminance' : 'Exitance'} at the exit surface — ${det.name}`"
+          :title="mapTitle"
           :values="det.map ?? det[det.quantity === 'luminance' ? 'luminance' : 'exitance']"
           :valid="det.valid"
           :vmin="logScale ? mapMax * 0.001 : 0"
@@ -131,7 +132,7 @@
         </section>
         <section class="res-card">
           <LineChart
-            title="Light by angle from the surface normal"
+            :title="isRcv ? 'Reflected light by angle from the surface normal' : 'Light by angle from the surface normal'"
             :series="angularSeries"
             x-label="degrees"
             y-label="relative intensity / Δu′v′"
@@ -148,11 +149,11 @@
         <div class="led-maps">
           <div v-for="l in det.leds" :key="l.id" class="led-map">
             <HeatMap v-if="l.map" :axes="false" :title="l.name" :values="l.map" :valid="det.valid" :vmax="mapMax" :u-mm="det.uExtentMm" :v-mm="det.vExtentMm" :unit="det.unit" />
-            <div class="muted small">{{ fmtPct(l.shareOfExit, 0) }} of the exit light · efficiency {{ fmtPct(l.efficiency) }}</div>
+            <div class="muted small">{{ fmtPct(l.shareOfExit, 0) }} of the {{ isRcv ? "light on the receiver" : "exit light" }} · efficiency {{ fmtPct(l.efficiency) }}</div>
           </div>
         </div>
         <table class="data-table">
-          <thead><tr><th>LED</th><th>Emitted lm</th><th>At exit lm</th><th>Efficiency</th><th>Share</th></tr></thead>
+          <thead><tr><th>LED</th><th>Emitted lm</th><th>{{ isRcv ? "At receiver lm" : "At exit lm" }}</th><th>Efficiency</th><th>Share</th></tr></thead>
           <tbody>
             <tr v-for="l in det.leds" :key="l.id"><td>{{ l.name }}</td><td>{{ fmtNum(l.emittedLm) }}</td><td>{{ fmtNum(l.exitLm) }}</td><td>{{ fmtPct(l.efficiency) }}</td><td>{{ fmtPct(l.shareOfExit, 0) }}</td></tr>
           </tbody>
@@ -166,7 +167,9 @@
         <p class="muted small">Absorption in the light pipe is split into volume (material) and surface losses. “Escaped” leaves through any other surface, e.g. the open sides.</p>
       </section>
 
-      <RenderPanel :run-id="runId" :state="stateId" />
+      <PartsInfoCard :run-id="runId" :state="stateId" />
+
+      <RenderPanel :run-id="runId" :state="stateId" :detectors="result.detectors" :detector="detIdx" />
     </template>
   </div>
 </template>
@@ -184,6 +187,7 @@ import CompareView from "./CompareView.vue";
 import RenderPanel from "./RenderPanel.vue";
 import AnalysisPanel from "./AnalysisPanel.vue";
 import NoiseBadge from "./NoiseBadge.vue";
+import PartsInfoCard from "./PartsInfoCard.vue";
 import type { AnalysisCtx } from "../composables/useAnalysisView";
 
 const props = defineProps<{ runId: string }>();
@@ -209,13 +213,23 @@ const apiAnalysis = computed<Analysis>(() => ({
 const compareOptions = computed(() => ({ log: logScale.value }));
 
 const det = computed<DetectorResult | null>(() => result.value?.detectors[detIdx.value] ?? null);
+// a receiver (the cast-light pattern on a table) tallies the light that arrives, and what the surface reflects toward the viewer
+const isRcv = computed(() => det.value?.kind === "receiver");
+const anyReceiver = computed(() => (result.value?.detectors ?? []).some((d) => d.kind === "receiver"));
+const allReceivers = computed(() => anyReceiver.value && (result.value?.detectors ?? []).every((d) => d.kind === "receiver"));
+const mapTitle = computed(() => {
+  const d = det.value;
+  if (!d) return "";
+  if (d.kind === "receiver") return `${d.quantity === "luminance" ? "Apparent luminance toward the viewer" : "Illuminance"} on the receiver — ${d.name}`;
+  return `${d.quantity === "luminance" ? "Luminance" : "Exitance"} at the exit surface — ${d.name}`;
+});
 // the viewing cone: the run keeps the light in rings around the traced cone, so the cone can be changed here without tracing again
 const coneRange = computed(() => det.value?.coneRange ?? null);
 const coneShown = computed(() => det.value?.coneDeg ?? det.value?.tracedConeDeg ?? 0);
 const coneChanged = computed(() => !!det.value && det.value.tracedConeDeg !== undefined && Math.abs(det.value.coneDeg - det.value.tracedConeDeg) > 1e-6);
 const coneTitle = computed(() =>
   coneRange.value
-    ? `Half angle of the viewing cone the luminance is measured in (${coneRange.value[0]}° to ${coneRange.value[1]}°; traced with ${det.value?.tracedConeDeg}°). Applies to every exit surface, limited to the range each one has.`
+    ? `Half angle of the viewing cone the luminance is measured in (${coneRange.value[0]}° to ${coneRange.value[1]}°; traced with ${det.value?.tracedConeDeg}°). Applies to every exit surface and receiver, limited to the range each one has.`
     : "Half angle of the viewing cone the luminance is measured in. This run was made without the angle rings (run it again to change the cone here).",
 );
 function onCone(v: string) {
@@ -245,7 +259,7 @@ const anaCtx = computed<AnalysisCtx | null>(() => {
 const noisy = computed(() => (result.value?.rays ?? 0) < 100000);
 const uAxis = computed(() => (det.value ? det.value.profileU.map((_, i) => ((i + 0.5) / det.value!.nu) * det.value!.uExtentMm) : []));
 const vAxis = computed(() => (det.value ? det.value.profileV.map((_, i) => ((i + 0.5) / det.value!.nv) * det.value!.vExtentMm) : []));
-const roiText = computed(() => (analysis.roi ? `Statistics use the selected region (${analysis.roi.map((x) => (x * 100).toFixed(0)).join(", ")} %).` : "Statistics use the whole exit surface."));
+const roiText = computed(() => (analysis.roi ? `Statistics use the selected region (${analysis.roi.map((x) => (x * 100).toFixed(0)).join(", ")} %).` : `Statistics use the whole ${isRcv.value ? "receiver" : "exit surface"}.`));
 const angularSeries = computed(() => {
   const a = det.value?.angular;
   if (!a) return [];

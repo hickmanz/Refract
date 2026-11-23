@@ -5,7 +5,7 @@ import pytest
 
 mitsuba = pytest.importorskip("mitsuba")
 
-from lightsim.render import mitsuba_export as mx  # noqa: E402
+from refract.render import mitsuba_export as mx  # noqa: E402
 
 
 def test_environment_frame_follows_the_camera():

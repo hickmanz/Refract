@@ -1,4 +1,4 @@
-"""Generate a sample 5-LED light bar STEP assembly (end-to-end fixture for LightSim).
+"""Generate a sample 5-LED light bar STEP assembly (end-to-end fixture for Refract).
 
     python scripts/make_sample_step.py [output.step] [--variant a|b]
 

@@ -7,7 +7,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from lightsim import updater
+from refract import updater
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +19,7 @@ def _fresh(monkeypatch):
 
 
 def _installer(folder, version, size=1_200_000):
-    path = folder / f"LightSim-Setup-{version}.exe"
+    path = folder / f"Refract-Setup-{version}.exe"
     path.write_bytes(b"x" * size)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     (folder / (path.name + ".sha256")).write_text(f"{digest}  {path.name}\n")
@@ -74,11 +74,11 @@ def test_manifest_in_folder(tmp_path):
 def test_github_release(monkeypatch):
     digest = "ab" * 32
     release = {
-        "html_url": "https://github.com/hickmanz/LightPipeSim/releases/tag/v0.3.0",
+        "html_url": "https://github.com/hickmanz/Refract/releases/tag/v0.3.0",
         "body": "notes",
         "assets": [
-            {"name": "LightSim-Setup-0.3.0.exe", "browser_download_url": "https://example.test/LightSim-Setup-0.3.0.exe", "size": 5},
-            {"name": "LightSim-Setup-0.3.0.exe.sha256", "browser_download_url": "https://example.test/sha"},
+            {"name": "Refract-Setup-0.3.0.exe", "browser_download_url": "https://example.test/Refract-Setup-0.3.0.exe", "size": 5},
+            {"name": "Refract-Setup-0.3.0.exe.sha256", "browser_download_url": "https://example.test/sha"},
         ],
     }
 
@@ -86,13 +86,13 @@ def test_github_release(monkeypatch):
         if url.endswith("/releases/latest"):
             return json.dumps(release).encode()
         if url.endswith("/sha"):
-            return f"{digest}  LightSim-Setup-0.3.0.exe".encode()
+            return f"{digest}  Refract-Setup-0.3.0.exe".encode()
         raise updater.UpdateError("unexpected " + url)
 
     monkeypatch.setattr(updater, "_http_get", fake_get)
     res = updater.check(dict(updater.DEFAULTS))
     assert res["available"] and res["latest"] == "0.3.0" and res["offer"]["page"].endswith("v0.3.0")
-    assert updater._last_offer["sha256"] == digest and updater._last_offer["file"] == "LightSim-Setup-0.3.0.exe"
+    assert updater._last_offer["sha256"] == digest and updater._last_offer["file"] == "Refract-Setup-0.3.0.exe"
 
 
 def test_github_without_release(monkeypatch):
@@ -119,7 +119,7 @@ def test_download_checks_checksum(tmp_path):
     st = _wait_state()
     assert st["state"] == "ready" and updater._path.is_file() and st["done"] == st["total"] > 0
 
-    (tmp_path / "LightSim-Setup-0.2.0.exe.sha256").write_text("0" * 64)  # a wrong checksum
+    (tmp_path / "Refract-Setup-0.2.0.exe.sha256").write_text("0" * 64)  # a wrong checksum
     updater.check(_custom(tmp_path))
     updater.start_download()
     st = _wait_state()
@@ -144,7 +144,7 @@ def test_settings_validation(monkeypatch):
 
 
 def test_api(tmp_path):
-    from lightsim.app import app
+    from refract.app import app
 
     client = TestClient(app)
     cfg = client.get("/api/config").json()
@@ -157,3 +157,11 @@ def test_api(tmp_path):
     res = client.post("/api/update/check")
     assert res.status_code == 200 and res.json()["available"] and res.json()["latest"] == "9.9.9"
     client.put("/api/update/settings", json={"source": "github", "location": ""})
+
+
+def test_legacy_installer_name_still_recognised(tmp_path):
+    """Folders and releases from before the rename (LightSim-Setup-*) stay usable."""
+    path = tmp_path / "LightSim-Setup-0.3.0.exe"
+    path.write_bytes(b"x" * 1_200_000)
+    res = updater.check(_custom(tmp_path))
+    assert res["available"] and res["latest"] == "0.3.0"

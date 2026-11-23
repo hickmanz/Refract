@@ -19,7 +19,7 @@
           <div v-if="r.status === 'running'" class="muted small">{{ r.progress.phase }}</div>
           <div v-else-if="r.status === 'failed'" class="error small">{{ r.error }}</div>
           <div v-else-if="r.status === 'ready' && r.summary?.states?.length" class="muted small">
-            {{ fmtAgo(r.created) }} · <template v-if="r.solver === 'gpu'"><span :title="r.solverName">GPU</span> ·</template><template v-if="r.settings.one_channel_per_led">quick look (1 channel/LED) ·</template> {{ (r.raysTraced ?? r.settings.rays).toLocaleString() }} rays ·
+            {{ fmtAgo(r.created) }} · <template v-if="r.solver === 'gpu'"><span :title="r.solverName">GPU</span> ·</template><template v-if="r.settings.one_channel_per_led">quick look (1 channel/LED) ·</template><template v-if="r.mesh && r.mesh.quality !== 'normal'"><span :title="`${r.mesh.triangles.toLocaleString()} triangles`">{{ r.mesh.quality }} mesh</span> ·</template> {{ (r.raysTraced ?? r.settings.rays).toLocaleString() }} rays ·
             <template v-if="r.mapNoise != null">noise {{ (r.mapNoise * 100).toFixed(1) }} % ·</template>
             efficiency {{ fmtPct(r.summary.states[0].detectors[0]?.efficiency) }} ·
             {{ r.timing?.seconds }} s

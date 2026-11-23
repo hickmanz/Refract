@@ -3,7 +3,7 @@
 import { computed, ref, watch } from "vue";
 import { api, type SolverInfo } from "../api";
 
-const KEY = "lightsim.solver";
+const KEY = "refract.solver";
 const solvers = ref<SolverInfo[]>([{ id: "cpu", available: true, name: "CPU (Embree + Numba)", reason: null }]);
 const chosen = ref<string>(localStorage.getItem(KEY) === "gpu" ? "gpu" : "cpu");
 let loaded = false;

@@ -16,6 +16,7 @@
           <ul>
             <li v-for="e in entries" :key="e.id" :class="{ selected: e.id === selectedId }" @click="select(e.id)">
               <span class="lib-name">{{ e.name }}</span>
+              <span v-if="kindChip(e)" class="chip">{{ kindChip(e) }}</span>
               <span v-if="e.builtin" class="chip">built-in</span>
             </li>
           </ul>
@@ -61,7 +62,7 @@ const ws = useWorkspace();
 
 const kinds: { id: LibraryKind; label: string }[] = [
   { id: "materials", label: "Materials" },
-  { id: "finishes", label: "Surface finishes" },
+  { id: "finishes", label: "Textures & finishes" },
   { id: "leds", label: "LEDs" },
 ];
 const kind = ref<LibraryKind>("materials");
@@ -77,6 +78,12 @@ const saving = ref(false);
 
 const entries = computed(() => Object.values(ws.library.value?.[kind.value] ?? {}).sort((a, b) => Number(!!b.builtin) - Number(!!a.builtin) || a.name.localeCompare(b.name)));
 
+/** Short label that tells the roles apart in the list: opaque surface vs volume material, surface preset vs texture. */
+function kindChip(e: AnyDoc): string {
+  if (kind.value === "materials") return (e as MaterialDoc).mode === "surface" ? "opaque surface" : "volume";
+  if (kind.value === "finishes") return (e as FinishDoc).type === "opaque" ? "surface preset" : "texture";
+  return "";
+}
 function clone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x));
 }

@@ -34,12 +34,12 @@
       </label>
 
       <div v-if="det" class="live-metrics">
-        <div><span class="muted">Efficiency</span><strong>{{ fmtPct(det.efficiency) }}</strong></div>
+        <div><span class="muted">{{ det.kind === "receiver" ? "Arriving" : "Efficiency" }}</span><strong>{{ fmtPct(det.efficiency) }}</strong></div>
         <div><span class="muted">Min / max</span><strong>{{ det.stats.minOverMax == null ? "–" : fmtPct(det.stats.minOverMax, 0) }}</strong></div>
         <div><span class="muted">Hotspots</span><strong>{{ det.hotspots.length }}</strong></div>
         <div><span class="muted">Δu′v′</span><strong>{{ det.color?.maxDuv == null ? "–" : det.color.maxDuv.toFixed(3) }}</strong></div>
         <div v-if="det.color"><span class="muted">CCT</span><strong>{{ Math.round(det.color.cct) }} K</strong></div>
-        <div><span class="muted">Exit</span><strong>{{ det.exitLm.toFixed(2) }} lm</strong></div>
+        <div><span class="muted">{{ det.kind === "receiver" ? "On receiver" : "Exit" }}</span><strong>{{ det.exitLm.toFixed(2) }} lm</strong></div>
       </div>
       <p v-else-if="live.phase.value !== 'error'" class="muted small">The first picture appears after a couple of seconds.</p>
       <NoiseBadge v-if="det" :noise="det.noise" />
@@ -103,6 +103,13 @@
             <option value="transport">Full light transport (noisy)</option>
           </select>
         </label>
+        <div v-if="view.mode === 'map' && exitSurfaces.length > 1" class="exit-pick">
+          <span class="small" title="Which exit surfaces glow in the picture. The others stay dark, and the brightness is set by the ones shown.">Lit exit surfaces</span>
+          <label v-for="s in exitSurfaces" :key="s.index" class="check small">
+            <input type="checkbox" :checked="!view.hiddenExits.includes(s.index)" :disabled="!view.hiddenExits.includes(s.index) && exitSurfaces.length - view.hiddenExits.length <= 1" @change="toggleExit(s.index, ($event.target as HTMLInputElement).checked)" />
+            {{ s.name }}
+          </label>
+        </div>
         <label class="mini">
           <span title="Pixels along the long side of the picture. Higher is sharper and smoother at the edges, but every pass takes longer, so it needs more time to refine.">Resolution</span>
           <select v-model.number="view.resolution">
@@ -140,6 +147,7 @@
 import { computed } from "vue";
 import { AlertTriangle, Check, Save, X, Zap } from "lucide-vue-next";
 import { LIVE_RAY_CHOICES, TIO2_RANGE, type LivePreview } from "../composables/useLivePreview";
+import { useWorkspace } from "../composables/useWorkspace";
 import { fmtPct } from "../utils/colormap";
 import NoiseBadge from "./NoiseBadge.vue";
 
@@ -151,11 +159,21 @@ export interface PhotorealView {
   mode: "map" | "transport";
   /** Long side of the picture in pixels; 0 follows the size of the 3D view. */
   resolution: number;
+  /** Exit surfaces (indices in the setup) that stay dark in the picture; empty lights all of them. */
+  hiddenExits: number[];
   status: { state: "starting" | "waiting" | "live" | "error"; message: string; spp: number; ms: number; variant: string; fps: number } | null;
 }
 
 const props = defineProps<{ live: LivePreview; view: PhotorealView }>();
 defineEmits<{ close: [] }>();
+
+const ws = useWorkspace();
+/** The exit surfaces (and receivers) of the setup, by their index: that is how the picture refers to them. */
+const exitSurfaces = computed(() => (ws.setup.value?.detectors ?? []).map((d, index) => ({ index, name: d.name || `Exit surface ${index + 1}` })));
+function toggleExit(index: number, lit: boolean) {
+  const rest = props.view.hiddenExits.filter((i) => i !== index);
+  props.view.hiddenExits = lit ? rest : [...rest, index].sort((a, b) => a - b);
+}
 
 const det = computed(() => props.live.detector.value);
 const [LO, HI] = TIO2_RANGE;

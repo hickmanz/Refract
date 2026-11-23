@@ -1,6 +1,6 @@
 <template>
   <section class="res-card">
-    <div class="hm-title"><span>Picture of the exit surface (Mitsuba 3)</span></div>
+    <div class="hm-title"><span>Picture of the {{ detectors?.[form.detector]?.name ?? "exit surface" }} (Mitsuba 3)</span></div>
     <p v-if="st && !st.available" class="muted small">{{ st.reason }}</p>
     <template v-else>
       <div class="render-form">
@@ -17,6 +17,17 @@
         <label class="mini narrow"><span>Samples</span>
           <select v-model.number="form.spp"><option v-for="s in [8, 32, 128, 512, 2048, 8192, 16384, 32768]" :key="s" :value="s">{{ s }}</option></select>
         </label>
+        <label v-if="(detectors?.length ?? 0) > 1" class="mini" title="The surface the camera looks at">
+          <span>Look at</span>
+          <select v-model.number="form.detector"><option v-for="(d, i) in detectors" :key="i" :value="i">{{ d.name }}</option></select>
+        </label>
+        <div v-if="form.mode === 'map' && (detectors?.length ?? 0) > 1" class="exit-pick" title="Which exit surfaces glow in the picture. The others stay dark, and the brightness is set by the ones shown.">
+          <span class="small">Lit exit surfaces</span>
+          <label v-for="(d, i) in detectors" :key="i" class="check small">
+            <input type="checkbox" :checked="!form.hidden_exits.includes(i)" :disabled="!form.hidden_exits.includes(i) && (detectors?.length ?? 0) - form.hidden_exits.length <= 1" @change="toggleExit(i, ($event.target as HTMLInputElement).checked)" />
+            {{ d.name }}
+          </label>
+        </div>
         <label class="mini narrow"><span>Turn {{ form.azimuth }}°</span><input v-model.number="form.azimuth" type="range" min="-70" max="70" step="5" /></label>
         <label class="mini narrow"><span>Tilt {{ form.elevation }}°</span><input v-model.number="form.elevation" type="range" min="-70" max="70" step="5" /></label>
         <label class="mini narrow"><span>Zoom {{ form.zoom.toFixed(1) }}×</span><input v-model.number="form.zoom" type="range" min="0.5" max="4" step="0.1" /></label>
@@ -44,10 +55,14 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { Camera, Info, X } from "lucide-vue-next";
 import { api, type RenderState } from "../api";
 
-const props = defineProps<{ runId: string; state?: string }>();
+const props = defineProps<{ runId: string; state?: string; detectors?: { name: string }[]; detector?: number }>();
 const st = ref<RenderState | null>(null);
 const error = ref("");
-const form = reactive({ mode: "map" as "map" | "transport", width: 640, spp: 32, azimuth: 0, elevation: 0, zoom: 1, exposure: 0, ambient: 0.04, white_balance: true });
+const form = reactive({ mode: "map" as "map" | "transport", width: 640, spp: 32, azimuth: 0, elevation: 0, detector: props.detector ?? 0, zoom: 1, exposure: 0, ambient: 0.04, white_balance: true, hidden_exits: [] as number[] });
+function toggleExit(index: number, lit: boolean) {
+  const rest = form.hidden_exits.filter((i) => i !== index);
+  form.hidden_exits = lit ? rest : [...rest, index].sort((a, b) => a - b);
+}
 let timer: number | undefined;
 
 const busy = computed(() => st.value?.render?.status === "queued" || st.value?.render?.status === "running");
@@ -77,5 +92,6 @@ async function cancel() {
   await refresh();
 }
 watch(() => props.runId, refresh, { immediate: true });
+watch(() => props.detector, (d) => { if (d !== undefined) form.detector = d; }); // follows the surface chosen in the results
 onBeforeUnmount(() => window.clearTimeout(timer));
 </script>

@@ -10,9 +10,15 @@ from fastapi.testclient import TestClient
 from conftest import SAMPLES
 
 
+def _setup_url(client, pid):
+    """The setup route of the project's first (baseline) variant."""
+    vid = client.get(f"/api/projects/{pid}").json()["variants"][0]["id"]
+    return f"/api/projects/{pid}/variants/{vid}/setup"
+
+
 @pytest.fixture(scope="module")
 def client():
-    from lightsim.app import app
+    from refract.app import app
 
     return TestClient(app)
 
@@ -47,7 +53,7 @@ def project(client):
     assert len({round(led["placement"]["sig"]["centroid"][2], 3) for led in sug["leds"]}) == 1
     assert sug["detectors"] and sug["detectors"][0]["faces"]
     setup = {k: sug[k] for k in ("parts", "leds", "detectors", "states")}
-    assert client.put(f"/api/projects/{pid}/setup", json=setup).status_code == 200
+    assert client.put(_setup_url(client, pid), json=setup).status_code == 200
     rid_b, _ = _upload(client, "lightbar_b.step", pid)
     yield {"pid": pid, "a": rid_a, "b": rid_b}
     client.delete(f"/api/projects/{pid}")
@@ -73,7 +79,7 @@ def test_check_setup(client, project):
 
 
 def test_check_reports_missing_group_faces(client, project):
-    setup = client.get(f"/api/projects/{project['pid']}/setup").json()
+    setup = client.get(_setup_url(client, project['pid'])).json()
     parts = client.get(f"/api/revisions/{project['a']}/parts").json()["instances"]
     real = parts[0]["name"]
     setup["analysisGroups"] = [
@@ -116,6 +122,48 @@ def test_run_results_and_energy(client, project):
     assert runs and runs[0]["summary"]["states"]
 
 
+def test_run_parts_lists_materials_finishes_overrides_and_excluded_parts(client, project):
+    """The parts of a run come with the material and finish definitions the run was made with, the faces with their own finish,
+    the light each part absorbed, and the parts the setup left out."""
+    base = client.get(_setup_url(client, project["pid"])).json()
+    names = [p["name"] for p in client.get(f"/api/revisions/{project['a']}/parts").json()["instances"]]
+    # a part that the light does not depend on (not an LED, the pipe or the tray) is switched off, if the bar has one
+    spare = next((n for n in names if not any(k in n.lower() for k in ("led", "pipe", "tray"))), None)
+    rules = [*base["parts"], {"match": "Reflector Tray:1", "faces": {"7": "mirror"}}]
+    if spare:
+        rules.append({"match": spare, "enabled": False})
+    edited = {**base, "parts": rules}
+    try:
+        assert client.put(_setup_url(client, project["pid"]), json=edited).status_code == 200
+        runid = _run(client, project["a"], 20_000)
+    finally:
+        client.put(_setup_url(client, project["pid"]), json=base)
+    out = client.get(f"/api/runs/{runid}/parts").json()
+    by_name = {p["name"]: p for p in out["parts"]}
+    assert out["state"] == "all" and by_name
+
+    pipe = next(p for p in out["parts"] if "pipe" in p["name"].lower())
+    assert pipe["kind"] == "volume" and pipe["material"]["name"]
+    props = pipe["material"]["properties"]
+    assert props["kind"] == "volume" and 1.4 < props["n550"] < 1.7 and props["absorption550"] >= 0
+    assert pipe["finish"]["id"] and pipe["finish"]["properties"]["sigma"] >= 0
+    # fractions of the emitted flux
+    assert all(0 <= p["absorbed"]["volume"] <= 1 and 0 <= p["absorbed"]["surface"] <= 1 for p in out["parts"])
+    assert sum(p["absorbed"]["volume"] + p["absorbed"]["surface"] for p in out["parts"]) <= 1.0 + 1e-6
+
+    tray = by_name["Reflector Tray:1"]
+    assert [(f["face"], f["finish"], f["applied"]) for f in tray["faceOverrides"]] == [(7, "mirror", True)]
+    assert tray["faceOverrides"][0]["properties"]["rspec"] > 0.5
+
+    if spare:
+        assert spare not in by_name
+        assert any(e["name"] == spare for e in out["excluded"])
+    else:
+        assert out["excluded"] == []
+    assert client.get(f"/api/runs/{runid}/parts", params={"state": "nope"}).status_code == 404
+    client.delete(f"/api/runs/{runid}")
+
+
 def test_compare_revisions(client, project):
     ra = _run(client, project["a"], 20_000)
     rb = _run(client, project["b"], 20_000)
@@ -126,22 +174,22 @@ def test_compare_revisions(client, project):
 def test_coloured_housing_shifts_colour(client, project):
     """A yellow reflector absorbs blue: less light reaches the exit and its colour becomes warmer."""
     pid = project["pid"]
-    setup = client.get(f"/api/projects/{pid}/setup").json()
+    setup = client.get(_setup_url(client, pid)).json()
     base = _run(client, project["a"], 60_000)
     ref = client.get(f"/api/runs/{base}/results").json()["detectors"][0]
     yellow = {**setup, "parts": [({**p, "finish": "plastic_yellow"} if p["match"] == "Reflector Tray:1" else p) for p in setup["parts"]]}
     try:
-        assert client.put(f"/api/projects/{pid}/setup", json=yellow).status_code == 200
+        assert client.put(_setup_url(client, pid), json=yellow).status_code == 200
         run = _run(client, project["a"], 60_000)
         out = client.get(f"/api/runs/{run}/results").json()["detectors"][0]
     finally:
-        client.put(f"/api/projects/{pid}/setup", json=setup)
+        client.put(_setup_url(client, pid), json=setup)
     assert out["efficiency"] < 0.9 * ref["efficiency"]
     assert out["color"]["cct"] < ref["color"]["cct"] - 300
 
 
 def test_parameter_sweep(client, project):
-    setup = client.get(f"/api/projects/{project['pid']}/setup").json()
+    setup = client.get(_setup_url(client, project['pid'])).json()
     body = {"parameter": "tio2_wt_pct", "part": "Light Pipe:1", "values": [0.02, 0.3], "settings": {"rays": 20_000}, "name": "TiO2"}
     res = client.post(f"/api/revisions/{project['a']}/sweeps", json=body)
     assert res.status_code == 200, res.text
@@ -153,7 +201,7 @@ def test_parameter_sweep(client, project):
     effs = [d["summary"]["states"][0]["detectors"][0]["efficiency"] for d in done]
     assert effs[0] != effs[1]
     # the project's own setup is untouched by the sweep
-    assert client.get(f"/api/projects/{project['pid']}/setup").json() == setup
+    assert client.get(_setup_url(client, project['pid'])).json() == setup
 
     bad = client.post(f"/api/revisions/{project['a']}/sweeps", json={**body, "part": "LED:1"})
     assert bad.status_code == 400
@@ -183,7 +231,7 @@ def test_ray_file_source(client, project):
     assert info["count"] == 4000 and not info["hasWavelength"] and info["backwardFraction"] == 0
     assert abs(info["intensity"][12] / info["intensity"][4] - 0.5) < 0.15
 
-    base = client.get(f"/api/projects/{project['pid']}/setup").json()
+    base = client.get(_setup_url(client, project['pid'])).json()
     spec = {"type": "phosphor_white", "cct": 5000}
     pat = client.post("/api/library/leds", json={"name": "T pattern", "channels": [{"id": "W", "name": "W", "flux_lm": 10, "spectrum": spec, "pattern": {"type": "lambertian", "exponent": 1}}], "emitter": {"shape": "rect", "size": [1.6, 1.6]}}).json()
     ray = client.post("/api/library/leds", json={"name": "T rays", "channels": [{"id": "W", "name": "W", "flux_lm": 10, "spectrum": spec, "source": {"type": "rays", "file": info["file"]}}], "emitter": {"shape": "rect", "size": [1.6, 1.6]}}).json()
@@ -191,12 +239,12 @@ def test_ray_file_source(client, project):
         effs = []
         for model in (pat["id"], ray["id"]):
             setup = {**base, "leds": [{**led, "model": model} for led in base["leds"]]}
-            assert client.put(f"/api/projects/{project['pid']}/setup", json=setup).status_code == 200
+            assert client.put(_setup_url(client, project['pid']), json=setup).status_code == 200
             runid = _run(client, project["a"], 60_000)
             effs.append(client.get(f"/api/runs/{runid}/results").json()["detectors"][0]["efficiency"])
         assert abs(effs[0] - effs[1]) < 0.04, effs
     finally:
-        client.put(f"/api/projects/{project['pid']}/setup", json=base)
+        client.put(_setup_url(client, project['pid']), json=base)
         client.delete(f"/api/library/leds/{pat['id']}")
         client.delete(f"/api/library/leds/{ray['id']}")
 
@@ -234,18 +282,18 @@ def test_unwrapped_exit_surface_matches_flat_projection(client, project):
     """A flat exit face unwrapped must give the same totals and the same profile as the flat projection."""
     import numpy as np
 
-    base = client.get(f"/api/projects/{project['pid']}/setup").json()
+    base = client.get(_setup_url(client, project['pid'])).json()
     res = {}
     try:
         for mapping in ("plane", "unwrap"):
             setup = {**base, "detectors": [{**d, "mapping": mapping} for d in base["detectors"]]}
-            assert client.put(f"/api/projects/{project['pid']}/setup", json=setup).status_code == 200
+            assert client.put(_setup_url(client, project['pid']), json=setup).status_code == 200
             runid = _run(client, project["a"], 60_000)
             r = client.get(f"/api/runs/{runid}/results").json()
             scene = client.get(f"/api/runs/{runid}/scene").json()
             res[mapping] = (r["detectors"][0], scene["detectors"][0])
     finally:
-        client.put(f"/api/projects/{project['pid']}/setup", json=base)
+        client.put(_setup_url(client, project['pid']), json=base)
     (dp, sp), (du, su) = res["plane"], res["unwrap"]
     assert sp["mode"] == 0 and su["mode"] == 1 and su["mesh"]["uv"]
     assert abs(dp["efficiency"] - du["efficiency"]) < 1e-9  # the same rays, the same exit power
@@ -297,7 +345,7 @@ def test_live_preview_is_progressive_hidden_and_keepable(client, project):
 
 def test_live_override_changes_the_result_without_touching_the_setup(client, project):
     rid = project["a"]
-    before = client.get(f"/api/projects/{project['pid']}/setup").json()
+    before = client.get(_setup_url(client, project['pid'])).json()
     parts = client.get(f"/api/revisions/{rid}/parts").json()["instances"]
     pipe = next(p for p in parts if "pipe" in p["name"].lower())
     out = {}
@@ -311,7 +359,7 @@ def test_live_override_changes_the_result_without_touching_the_setup(client, pro
         assert _wait(client, f"/api/runs/{runid}")["status"] == "ready"
         out[tio2] = client.get(f"/api/runs/{runid}/results").json()["detectors"][0]["efficiency"]
     assert out[0.01] > 3 * out[0.6]  # heavy diffusion keeps the light from reaching the far end
-    assert client.get(f"/api/projects/{project['pid']}/setup").json() == before
+    assert client.get(_setup_url(client, project['pid'])).json() == before
     bad = client.post(f"/api/revisions/{rid}/live", json={"overrides": [{"parameter": "tio2_wt_pct", "part": pipe["name"], "value": 900}]})
     assert bad.status_code == 400
     live = client.get(f"/api/revisions/{rid}/live").json()["run"]
@@ -366,7 +414,7 @@ def test_live_view_frame(client, project):
     assert Image.open(_io.BytesIO(big.content)).size == (3200, 1800)
     assert client.post("/api/live-view/close").status_code == 200
     assert client.delete(f"/api/runs/{runid}").status_code == 200
-    from lightsim import store
+    from refract import store
 
     assert not store.run_dir(rid, runid).exists()  # the helper let go of the folder
 
@@ -390,7 +438,7 @@ def test_results_at_another_viewing_cone(client, project):
 
     import numpy as np
 
-    from lightsim import store
+    from refract import store
 
     runid = _run(client, project["a"], rays=60_000)
     url = f"/api/runs/{runid}/results"
@@ -421,8 +469,8 @@ def test_results_at_another_viewing_cone(client, project):
 def test_noise_target_run_keeps_analysis_with_a_final_pass(client, project):
     import numpy as np
 
-    from lightsim import store
-    from lightsim.analysis import ANALYSIS_FILE
+    from refract import store
+    from refract.analysis import ANALYSIS_FILE
 
     # stops after the first 250,000 rays; the analysis pass covers only the first 100,000, so its tables are scaled by 2.5
     res = client.post(
@@ -448,7 +496,7 @@ def test_noise_target_run_keeps_analysis_with_a_final_pass(client, project):
 def test_one_channel_per_led_keeps_the_brightest_driven_channel():
     from types import SimpleNamespace as NS
 
-    from lightsim.simrun import one_channel_per_led
+    from refract.simrun import one_channel_per_led
 
     def ch(led, cid, flux):
         return NS(key=f"{led}/{cid}", led_id=led, flux_lm=flux)
@@ -484,7 +532,7 @@ def test_solvers_endpoint_and_validation(client, project):
 
 
 def test_gpu_run_matches_the_cpu_run_and_keeps_analysis(client, project):
-    from lightsim.engine import solvers
+    from refract.engine import solvers
 
     ok, why = solvers.gpu_status()
     if not ok:
@@ -513,7 +561,7 @@ def test_gpu_run_matches_the_cpu_run_and_keeps_analysis(client, project):
     assert g["detectors"][0]["stats"]["mean"] == pytest.approx(c["detectors"][0]["stats"]["mean"], rel=0.05)
 
 def test_live_preview_on_the_gpu(client, project):
-    from lightsim.engine import solvers
+    from refract.engine import solvers
 
     ok, why = solvers.gpu_status()
     if not ok:
@@ -529,3 +577,55 @@ def test_live_preview_on_the_gpu(client, project):
     got = client.get(f"/api/runs/{first['id']}/results").json()
     assert got["detectors"][0]["efficiency"] > 0 and abs(got["lossSum"] - 1.0) < 1e-3
     client.delete(f"/api/runs/{first['id']}")
+
+
+def test_receiver_detector_end_to_end(client, project):
+    """A receiver on a diffuse wall of the bar: it is stored and checked, tallies the arriving light and the reflected cone,
+    closes the energy budget, and leaves an ordinary exit surface (and old setups without a type) untouched."""
+    import math
+
+    base = client.get(_setup_url(client, project['pid'])).json()
+    assert all("type" not in d for d in base["detectors"])  # an old setup: no type means exit surface
+    rcv = {"id": "rc", "name": "Tray wall", "faces": [{"part": "Reflector Tray:1", "face": 7}], "cone_deg": 20, "resolution": 40, "type": "receiver", "view_el": 90, "view_az": 0}
+    try:
+        plain = _run(client, project["a"], 30_000)
+        ref = client.get(f"/api/runs/{plain}/results").json()
+        assert ref["detectors"][0]["kind"] == "exit" and "reflectedLm" not in ref["detectors"][0]
+
+        setup = {**base, "detectors": [*base["detectors"], rcv]}
+        assert client.put(_setup_url(client, project['pid']), json=setup).status_code == 200
+        assert client.get(_setup_url(client, project['pid'])).json()["detectors"][1]["type"] == "receiver"
+        chk = client.post(f"/api/revisions/{project['a']}/check").json()
+        assert [d["kind"] for d in chk["detectors"]] == ["exit", "receiver"]
+        assert len(chk["detectors"][1]["view"]) == 3 and len(chk["detectors"][1]["origin"]) == 3
+
+        runid = _run(client, project["a"], 30_000)
+        res = client.get(f"/api/runs/{runid}/results").json()
+        assert abs(res["lossSum"] - 1.0) < 1e-3  # the receiver consumes nothing: the budget still closes
+        ex, rc = res["detectors"]
+        assert ex["kind"] == "exit" and rc["kind"] == "receiver"
+        assert ex["efficiency"] == pytest.approx(ref["detectors"][0]["efficiency"], rel=1e-9)  # the same rays reach the exit surface
+        assert rc["exitLm"] > 0 and rc["unit"] == "cd/m2"
+        assert rc["viewElevationDeg"] == pytest.approx(90.0) and rc["viewDir"] == pytest.approx(chk["detectors"][1]["view"], abs=1e-6)
+        # a white diffuse wall seen along its normal: luminous flux in the cone = rho * sin^2(cone) * the flux that arrived (rho 0.9)
+        assert rc["reflectedLm"] / rc["exitLm"] == pytest.approx(0.9 * math.sin(math.radians(20)) ** 2, rel=0.1)
+        illum = client.get(f"/api/runs/{runid}/results", params={"view": "all"}).json()["detectors"][1]
+        assert illum["unit"] == "lx" and illum["stats"]["max"] > 0
+        sc = client.get(f"/api/runs/{runid}/scene").json()
+        assert [d["kind"] for d in sc["detectors"]] == ["exit", "receiver"]
+
+        # the ray options can ask for the light that reached one detector; the exit events of the paths say which one that was
+        for k in (0, 1):
+            r = client.post(f"/api/runs/{runid}/analysis/rays", json={"filter": {"detector": k}, "count": 40}).json()
+            assert [d["kind"] for d in r["detectors"]] == ["exit", "receiver"]
+            assert r["matched"] > 0 and r["paths"], k
+            for p in r["paths"]:
+                assert len(p["det"]) == len(p["event"])
+                assert k in p["det"], (k, p["det"])  # every drawn ray arrived on the detector that was asked for
+                assert all(d == -1 or e == 8 for d, e in zip(p["det"], p["event"]))
+        both = client.post(f"/api/runs/{runid}/analysis/rays", json={"filter": {"outcome": "exit"}, "count": 5}).json()
+        assert both["matched"] >= max(
+            client.post(f"/api/runs/{runid}/analysis/rays", json={"filter": {"detector": k}, "count": 5}).json()["matched"] for k in (0, 1)
+        )
+    finally:
+        client.put(_setup_url(client, project['pid']), json=base)

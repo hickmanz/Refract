@@ -80,7 +80,7 @@ import { Play, Trash2 } from "lucide-vue-next";
 import { api, type RunMeta, type SweepInfo } from "../api";
 import { useWorkspace } from "../composables/useWorkspace";
 import { fmtPct } from "../utils/colormap";
-import { partPattern, resolvePart } from "../utils/setup";
+import { isVolumeMaterial, partPattern, resolvePart } from "../utils/setup";
 import LineChart from "./LineChart.vue";
 
 defineProps<{ mode: "form" | "results" }>();
@@ -114,7 +114,7 @@ const diffusers = computed(() => {
   if (!s) return [];
   return ws.parts.value
     .map((inst) => ({ inst, eff: resolvePart(inst, s.parts) }))
-    .filter((x) => x.eff.enabled && x.eff.material)
+    .filter((x) => x.eff.enabled && isVolumeMaterial(ws.library.value, x.eff.material))
     .map((x) => ({ inst: x.inst, material: ws.library.value?.materials[x.eff.material!]?.name ?? x.eff.material! }));
 });
 watch(diffusers, (d) => {

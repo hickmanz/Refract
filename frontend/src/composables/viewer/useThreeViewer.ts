@@ -10,6 +10,7 @@ import {
 import * as THREE from "three";
 import { useTransformGizmo } from "./useTransformGizmo";
 import { CadOrbitControls } from "../../lib/CadOrbitControls";
+import { viewportBackground } from "../useTheme";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "meshoptimizer";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -1339,9 +1340,10 @@ export function useThreeViewer(
 
     // Create scene
     const newScene = new THREE.Scene();
-    newScene.background = new THREE.Color(0x1a1a2e);
+    const initialBackground = viewportBackground();
+    newScene.background = new THREE.Color(initialBackground);
     scene.value = newScene;
-    setSceneBackground("#1a1a2e");
+    setSceneBackground(initialBackground);
     console.log("[useThreeViewer] Scene created");
 
     // Get container dimensions

@@ -2,6 +2,44 @@
   <div class="form-grid">
     <label class="field"><span>Name</span><input v-model="doc.name" :disabled="readonly" /></label>
 
+    <label class="field">
+      <span>Kind of material</span>
+      <select :value="mode" :disabled="readonly" @change="setMode(($event.target as HTMLSelectElement).value)">
+        <option value="volume">Volume: light enters it (clear, diffusing or translucent plastic, glass)</option>
+        <option value="surface">Opaque surface: only reflects or absorbs at the surface (PCB, housing, paint)</option>
+      </select>
+      <small class="muted">A thin white plastic wall passes some light, so model it as a volume with TiO₂ scattering. An opaque surface is the faster shortcut for walls thick enough that nothing gets through.</small>
+    </label>
+
+    <template v-if="mode === 'surface'">
+      <div class="field">
+        <span>Colour</span>
+        <div class="color-row">
+          <input type="color" :value="doc.color || '#ffffff'" :disabled="readonly" @input="pickColor($event)" />
+          <code class="muted">{{ doc.color || "neutral (grey)" }}</code>
+          <button v-if="doc.color && !readonly" class="btn small" type="button" @click="doc.color = undefined">No colour</button>
+        </div>
+        <small class="muted">The colour of the surface in white light. Picking one also sets the diffuse reflectance to that colour's brightness, which you can still change below.</small>
+      </div>
+      <label v-if="doc.color && (doc.rspec ?? 0) > 0.2" class="check small"><input v-model="doc.tint_specular" type="checkbox" :disabled="readonly" /> also colour the mirror part (coloured metal)</label>
+      <label class="field">
+        <span>Diffuse reflectance</span>
+        <input v-model.number="doc.rdiff" type="number" step="0.01" min="0" max="1" :disabled="readonly" />
+        <small class="muted">White plastic or mask about 0.80 to 0.90, grey 0.2 to 0.6, black about 0.04.</small>
+      </label>
+      <label class="field">
+        <span>Gloss reflectance</span>
+        <input v-model.number="doc.rspec" type="number" step="0.01" min="0" max="1" :disabled="readonly" />
+        <small class="muted">The mirror-like part. Plastics and solder mask are about 0.04 to 0.05; polished metal 0.8 or more. Diffuse + gloss must not exceed 1.</small>
+      </label>
+      <label class="field">
+        <span>Gloss roughness (RMS slope σ)</span>
+        <input v-model.number="doc.sigma" type="number" step="0.01" min="0" max="1.5" :disabled="readonly" />
+        <small class="muted">The default for this material. A texture finish on the part (VDI, MT) overrides it; "As material" keeps this value.</small>
+      </label>
+    </template>
+
+    <template v-if="mode === 'volume'">
     <div class="field">
       <span>Refractive index</span>
       <CurveEditor v-model="doc.n" :kinds="['constant', 'cauchy', 'table']" :readonly="readonly" />
@@ -58,7 +96,7 @@
     <section v-if="scType === 'mie' || scType === 'constant'" class="diffuser-tools">
       <div class="dt-head">
         <strong>Diffuser calculator</strong>
-        <span class="muted small">Check what this diffuser does at a given thickness, or tune it to datasheet transmission.</span>
+        <span class="muted small">Check what this diffuser does at a given thickness, or tune it to datasheet transmission. If the light passing straight through plus the diffuse transmission is below about 1 % at the wall thickness, an opaque surface material is a safe, faster shortcut.</span>
       </div>
       <div class="dt-row">
         <label class="mini">Thickness (mm) <input v-model.number="thickness" type="number" step="0.1" min="0.1" /></label>
@@ -112,6 +150,7 @@
       </div>
       <p v-if="error" class="error small">{{ error }}</p>
     </section>
+    </template>
 
     <label class="field"><span>Notes</span><textarea v-model="doc.notes" rows="2" :disabled="readonly" /></label>
   </div>
@@ -132,6 +171,34 @@ const sc = computed<Record<string, any>>(() => {
   return props.doc.scattering as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 });
 const scType = computed(() => String(sc.value.type ?? "none"));
+
+const mode = computed(() => (props.doc.mode === "surface" ? "surface" : "volume"));
+function setMode(m: string) {
+  const d = props.doc;
+  if (m === "surface") {
+    d.mode = "surface";
+    d.rdiff ??= 0.8;
+    d.rspec ??= 0.04;
+    d.sigma ??= 0.03;
+  } else {
+    d.mode = "volume";
+    d.n ??= { type: "cauchy", A: 1.58, B: 0.01 };
+    d.absorption ??= 0.001;
+    d.scattering ??= { type: "none" };
+  }
+}
+function pickColor(e: Event) {
+  const hex = (e.target as HTMLInputElement).value;
+  props.doc.color = hex;
+  // the reflectance level follows the colour's luminance (linear light), so a dark colour is also a dark surface
+  const lin = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  const y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  const total = Math.max(0, 1 - (props.doc.rspec ?? 0));
+  props.doc.rdiff = Math.round(Math.min(y, total) * 100) / 100;
+}
 
 function setScType(t: string) {
   if (t === "none") props.doc.scattering = { type: "none" };

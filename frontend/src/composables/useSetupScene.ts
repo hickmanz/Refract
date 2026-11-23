@@ -54,7 +54,7 @@ export function useSetupScene(
   const created: THREE.Material[] = [];
   const saved = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const overlay = new THREE.Group();
-  overlay.name = "lightsim-face-overlay";
+  overlay.name = "refract-face-overlay";
   let overlayAttached = false;
   const hover = ref<FaceHighlight | null>(null);
 
@@ -120,8 +120,9 @@ export function useSetupScene(
     }
   }
 
-  function finishColor(f: FinishDoc | undefined): { color: number; metalness: number } {
-    if (!f || f.type !== "opaque") return { color: 0x7b8794, metalness: 0.05 };
+  /** Preview colour of an opaque surface: a bundled finish, or an opaque surface material (same fields: colour, rdiff, rspec). */
+  function finishColor(f: Pick<FinishDoc, "color" | "rdiff" | "rspec"> & { type?: string; mode?: string } | undefined): { color: number; metalness: number } {
+    if (!f || (f.type !== "opaque" && f.mode !== "surface")) return { color: 0x7b8794, metalness: 0.05 };
     if (f.color && /^#[0-9a-f]{6}$/i.test(f.color)) return { color: parseInt(f.color.slice(1), 16), metalness: (f.rspec ?? 0) > 0.5 ? 0.85 : 0.05 };
     const refl = (f.rdiff ?? 0) + (f.rspec ?? 0);
     if ((f.rspec ?? 0) > 0.5) return { color: 0xcbd5e1, metalness: 0.85 };
@@ -162,12 +163,13 @@ export function useSetupScene(
         // ignored by the simulation, but shown on request (model tree): a faint grey ghost
         mat = roleMaterial(0x94a3b8, { opacity: see(dim ? 0.08 : 0.2), emissive });
       } else if (ledParts.has(inst.id)) mat = roleMaterial(0xfacc15, { emissive: selected ? 0xfacc15 : 0xa16207, opacity: see(dim ? 0.25 : 1) });
-      else if (eff.material && inst.closed) {
+      else if (eff.material && inst.closed && lib.materials[eff.material]?.mode !== "surface") {
         const mdoc = lib.materials[eff.material];
         const scatter = mdoc?.scattering && mdoc.scattering.type !== "none";
         mat = roleMaterial(scatter ? 0xe0ecff : 0x93c5fd, { opacity: see(dim ? 0.12 : scatter ? 0.62 : 0.4), emissive });
       } else {
-        const fc = finishColor(lib.finishes[eff.finish]);
+        const smat = eff.material ? lib.materials[eff.material] : undefined;
+        const fc = finishColor(smat?.mode === "surface" ? smat : lib.finishes[eff.finish]);
         mat = roleMaterial(fc.color, { metalness: fc.metalness, emissive, opacity: see(dim ? 0.2 : 1) });
       }
       for (const m of leaf.meshes) {
@@ -234,6 +236,12 @@ export function useSetupScene(
   const anyHidden = computed(() => {
     for (const id of leaves.value.keys()) if (!(visibility.value.get(id) ?? enabledByDefault(id))) return true;
     return false;
+  });
+  /** Instance ids of every part currently shown in the viewport. */
+  const shownIds = computed(() => {
+    const out: string[] = [];
+    for (const id of leaves.value.keys()) if (visibility.value.get(id) ?? enabledByDefault(id)) out.push(id);
+    return out;
   });
 
   // ── face overlays ─────────────────────────────────────────────────────────────
@@ -352,5 +360,5 @@ export function useSetupScene(
     overlayMats.forEach((m) => m.dispose());
   });
 
-  return { index, paint, pickFace, pickPart, setHover, hover, leaves, paintVersion, anyHidden, leafIdsUnder, setNodesVisible, showAll, isolate };
+  return { index, paint, pickFace, pickPart, setHover, hover, leaves, paintVersion, anyHidden, shownIds, leafIdsUnder, setNodesVisible, showAll, isolate };
 }

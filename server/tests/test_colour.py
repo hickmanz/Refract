@@ -1,7 +1,7 @@
 import pytest
 
-from lightsim import library as lib
-from lightsim.engine import spectral
+from refract import library as lib
+from refract.engine import spectral
 
 
 def test_finish_colour_spectrum():

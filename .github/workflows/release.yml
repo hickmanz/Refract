@@ -1,7 +1,7 @@
 name: Release installer
 
 # Push a tag such as v0.2.0 (or v0.3.0-beta.1 for a pre-release), or run the workflow by hand with a version.
-# It builds LightSim-Setup-<version>.exe and publishes it, with its checksum, as a GitHub release.
+# It builds Refract-Setup-<version>.exe and publishes it, with its checksum, as a GitHub release.
 # The in-app updater (Settings > Updates) reads that release.
 on:
   push:
@@ -72,14 +72,14 @@ jobs:
       - name: Check the installer
         shell: pwsh
         run: |
-          $setup = "dist-installer\LightSim-Setup-${{ steps.ver.outputs.version }}.exe"
+          $setup = "dist-installer\Refract-Setup-${{ steps.ver.outputs.version }}.exe"
           if (-not (Test-Path $setup)) { throw "$setup was not built" }
           Get-ChildItem dist-installer | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LightSim-Setup-${{ steps.ver.outputs.version }}
-          path: dist-installer/LightSim-Setup-*.exe*
+          name: Refract-Setup-${{ steps.ver.outputs.version }}
+          path: dist-installer/Refract-Setup-*.exe*
           if-no-files-found: error
 
       - name: Publish the release
@@ -88,8 +88,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ steps.ver.outputs.tag }}"
-          $files = @(Get-ChildItem "dist-installer\LightSim-Setup-*.exe*" | ForEach-Object FullName)
-          $flags = @("--title", "LightSim $($tag.TrimStart('v'))", "--generate-notes")
+          $files = @(Get-ChildItem "dist-installer\Refract-Setup-*.exe*" | ForEach-Object FullName)
+          $flags = @("--title", "Refract $($tag.TrimStart('v'))", "--generate-notes")
           if ("${{ steps.ver.outputs.prerelease }}" -eq "true") { $flags += "--prerelease" }
           if (gh release view $tag 2>$null) {
             gh release upload $tag @files --clobber

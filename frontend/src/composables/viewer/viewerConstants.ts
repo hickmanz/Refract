@@ -23,7 +23,7 @@ export const drawModes: {
     mode: 2,
   },
   { id: "shaded", label: "Shaded", icon: ShadedIcon, mode: 1 },
-  { id: "wireframe", label: "Wireframe", icon: WireframeIcon, mode: 0 },
+  { id: "wireframe", label: "Wireframe (display mesh, not the ray-traced one)", icon: WireframeIcon, mode: 0 },
   { id: "hiddenLine", label: "Hidden Line", icon: HiddenLineIcon, mode: 3 },
   { id: "xray", label: "XRay", icon: XrayIcon, mode: 4 },
 ];

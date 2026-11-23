@@ -19,6 +19,17 @@ export const hexToNumber = (hex: string | undefined, fallback = 0x8b5cf6) => {
   return m ? parseInt(m[1], 16) : fallback;
 };
 
+/**
+ * How a revision is called in lists: "Rev 2" (plus its label), "fine mesh of Rev 2" for a re-mesh, otherwise its label or file name.
+ * The number is stored on the revision, so deleting another revision does not renumber it. The server's compare uses the same wording.
+ */
+export function revisionName(rev: RevisionMeta, all: RevisionMeta[] = []): string {
+  if (rev.number) return `Rev ${rev.number}${rev.label ? ` “${rev.label}”` : ""}`;
+  const source = rev.remeshedFrom ? all.find((r) => r.id === rev.remeshedFrom) : undefined;
+  if (source?.number) return `${rev.meshQuality ?? "normal"} mesh of Rev ${source.number}`;
+  return rev.label || rev.filename;
+}
+
 export function createWorkspace(rid: Ref<string>) {
   const meta = ref<RevisionMeta | null>(null);
   const project = ref<Project | null>(null);
@@ -34,6 +45,9 @@ export function createWorkspace(rid: Ref<string>) {
   const runs = ref<RunMeta[]>([]);
   const pick = ref<PickMode>(null);
   const selectedPart = ref<string | null>(null);
+  const meshParts = ref<string[]>([]); // instances whose optical (ray-traced) mesh is drawn over the model
+  const meshAll = ref(false); // draw the optical mesh of every part shown in the viewport (the toolbar "Mesh" toggle)
+  const shownParts = ref<string[]>([]); // instances currently shown in the viewport (kept in sync by the revision view)
   const suggestNotes = ref<string[]>([]);
   const newLedModel = ref("white_generic"); // library model used when LEDs are added by picking faces
   const overrideFinish = ref("mirror"); // finish applied to faces picked as overrides
@@ -44,11 +58,13 @@ export function createWorkspace(rid: Ref<string>) {
   const parts = computed<PartDoc[]>(() => partsDoc.value?.instances ?? []);
   const isActive = computed(() => meta.value?.status === "queued" || meta.value?.status === "running");
   const ready = computed(() => meta.value?.status === "ready");
-  /** The variant (design alternative) of this revision; its setup is the one edited here. */
+  /** The variant of this revision; its setup is the one edited here. */
   const variantId = computed(() => meta.value?.variantId ?? project.value?.variants?.[0]?.id);
   const variant = computed(() => project.value?.variants?.find((v) => v.id === variantId.value) ?? null);
-  const fetchSetup = () => (variantId.value ? api.getVariantSetup(meta.value!.projectId, variantId.value) : api.getSetup(meta.value!.projectId));
-  const storeSetup = (s: Setup) => (variantId.value ? api.putVariantSetup(meta.value!.projectId, variantId.value, s) : api.putSetup(meta.value!.projectId, s));
+  /** The design the variant is in. */
+  const design = computed(() => project.value?.designs?.find((d) => d.id === variant.value?.designId) ?? null);
+  const fetchSetup = () => api.getVariantSetup(meta.value!.projectId, variantId.value!);
+  const storeSetup = (s: Setup) => api.putVariantSetup(meta.value!.projectId, variantId.value!, s);
 
   // ── polling the import job ─────────────────────────────────────────────────
   let pollTimer: number | undefined;
@@ -289,6 +305,9 @@ export function createWorkspace(rid: Ref<string>) {
     runs,
     pick,
     selectedPart,
+    meshParts,
+    meshAll,
+    shownParts,
     showGroups,
     focusGroup,
     runOrientationStale,
@@ -299,6 +318,7 @@ export function createWorkspace(rid: Ref<string>) {
     ready,
     variantId,
     variant,
+    design,
     reconcile,
     acceptFaceMatches,
     issuesFor,
@@ -322,7 +342,7 @@ export function createWorkspace(rid: Ref<string>) {
 }
 
 export type Workspace = ReturnType<typeof createWorkspace>;
-const KEY: InjectionKey<Workspace> = Symbol("lightsim-workspace");
+const KEY: InjectionKey<Workspace> = Symbol("refract-workspace");
 export const provideWorkspace = (ws: Workspace) => provide(KEY, ws);
 export function useWorkspace(): Workspace {
   const ws = inject(KEY);

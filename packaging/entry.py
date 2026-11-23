@@ -2,7 +2,7 @@
 
 import multiprocessing
 
-from lightsim.__main__ import main
+from refract.__main__ import main
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()

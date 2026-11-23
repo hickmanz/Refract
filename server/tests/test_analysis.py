@@ -7,11 +7,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import SAMPLES
-from lightsim.engine import kernels, replay, sources, tracer
-from lightsim.engine.scene import build_scene
+from refract.engine import kernels, replay, sources, tracer
+from refract.engine.scene import build_scene
 from test_engine_physics import Builder, detector, led, library_with
 
 N = 120_000
+
+
+def _setup_url(client, pid):
+    """The setup route of the project's first (baseline) variant."""
+    vid = client.get(f"/api/projects/{pid}").json()["variants"][0]["id"]
+    return f"/api/projects/{pid}/variants/{vid}/setup"
 
 
 def _scene():
@@ -144,7 +150,7 @@ def test_user_groups_and_other():
 # -- the API ---------------------------------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def client():
-    from lightsim.app import app
+    from refract.app import app
 
     return TestClient(app)
 
@@ -167,7 +173,7 @@ def run(client):
     assert _wait(client, f"/api/revisions/{rid}")["status"] == "ready"
     sug = client.post(f"/api/revisions/{rid}/suggest-setup").json()
     setup = {k: sug[k] for k in ("parts", "leds", "detectors", "states")}
-    assert client.put(f"/api/projects/{pid}/setup", json=setup).status_code == 200
+    assert client.put(_setup_url(client, pid), json=setup).status_code == 200
     res = client.post(f"/api/revisions/{rid}/runs", json={"settings": {"rays": 40_000}})
     runid = res.json()["id"]
     meta = _wait(client, f"/api/runs/{runid}")

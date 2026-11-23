@@ -77,7 +77,7 @@
 import { computed, ref, watch } from "vue";
 import { AlertTriangle, X } from "lucide-vue-next";
 import { api, type Analysis, type CompareResult } from "../api";
-import { useWorkspace } from "../composables/useWorkspace";
+import { revisionName, useWorkspace } from "../composables/useWorkspace";
 import { fmtNum, fmtPct } from "../utils/colormap";
 import HeatMap from "./HeatMap.vue";
 import LineChart from "./LineChart.vue";
@@ -92,24 +92,26 @@ const error = ref("");
 const candidates = ref<{ id: string; label: string }[]>([]);
 const ownLabel = ref("this run");
 
-const allRuns = ref<RunCandidate[]>([]); // every finished run of the project, grouped by variant (for the several-runs table)
+const allRuns = ref<RunCandidate[]>([]); // every finished run of the project, grouped by design and variant (for the several-runs table)
 const mode = ref<"pair" | "many">("pair");
-const variantName = (id?: string) => ws.project.value?.variants?.find((v) => v.id === id)?.name ?? "Variant";
+/** "Design › Variant" (just the variant's name when the project has one design). */
+const variantName = (id?: string) => {
+  const p = ws.project.value;
+  const v = p?.variants?.find((x) => x.id === id);
+  if (!v) return "Variant";
+  const d = (p?.designs?.length ?? 0) > 1 ? p?.designs.find((x) => x.id === v.designId) : undefined;
+  return d ? `${d.name} › ${v.name}` : v.name;
+};
 
 async function loadCandidates() {
   const revs = ws.project.value?.revisionList ?? (ws.meta.value ? [ws.meta.value] : []);
   const out: { id: string; label: string }[] = [];
   const everything: RunCandidate[] = [];
-  const perVariant = new Map<string | undefined, number>();
-  for (const rev of revs) perVariant.set(rev.variantId, (perVariant.get(rev.variantId) ?? 0) + 1);
-  const seen = new Map<string | undefined, number>();
   for (const rev of revs) {
-    const k = seen.get(rev.variantId) ?? 0;
-    seen.set(rev.variantId, k + 1);
     try {
       const runs = await api.listRuns(rev.id);
       const vName = variantName(rev.variantId);
-      const revName = rev.label || `Rev ${(perVariant.get(rev.variantId) ?? 1) - k} (${rev.filename})`;
+      const revName = revisionName(rev, revs);
       const multi = (ws.project.value?.variants?.length ?? 1) > 1;
       const label = `${multi ? `${vName} · ` : ""}${revName}`;
       for (const r of runs) {
