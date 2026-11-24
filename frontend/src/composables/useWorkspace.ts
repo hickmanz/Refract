@@ -230,7 +230,17 @@ export function createWorkspace(rid: Ref<string>) {
     const s = setup.value;
     if (!s) return out;
     const res = check.value?.resolved;
+    // the exit surface that faces are being picked into is painted from the setup itself, like a picked group, so a click shows at once
+    // (the server check, which resolves the faces of all the others, follows later)
+    const pickedDetId = pick.value?.kind === "detector" ? pick.value.detectorId : null;
     for (const d of s.detectors) {
+      if (d.id === pickedDetId) {
+        d.faces.forEach((f, i) => {
+          if (f.face === null || f.face === undefined) return;
+          for (const inst of instanceForPattern(f.part, parts.value)) out.push({ key: `det:${d.id}:${i}:${inst.id}`, instanceId: inst.id, face: f.face, color: 0x06b6d4, opacity: 0.75 });
+        });
+        continue;
+      }
       const list = res?.detectors?.[d.id];
       if (list) list.forEach((f, i) => out.push({ key: `det:${d.id}:${i}`, instanceId: f.instance, face: f.face, color: 0x06b6d4, opacity: 0.75 }));
     }

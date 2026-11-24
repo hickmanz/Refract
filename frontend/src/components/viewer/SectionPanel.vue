@@ -1,338 +1,127 @@
 <template>
-  <Transition name="section-panel">
-    <div v-if="visible" class="section-panel" @click.stop>
-      <div class="section-panel-header">
-        <span class="section-panel-title">CROSS SECTIONS</span>
-        <button
-          class="section-panel-close"
-          @click="$emit('update:visible', false)"
-          aria-label="Close panel"
-        >
-          <SquareX />
+  <Transition name="sp">
+    <section v-if="visible" class="sp" @click.stop @pointerdown.stop @wheel.stop>
+      <header class="sp-head">
+        <Scissors :size="15" />
+        <strong>Sections</strong>
+        <span class="spacer" />
+        <button class="sp-link" :disabled="activePlanes.size === 0" title="Remove every cut but keep this panel open" @click="emit('clear')">Clear cuts</button>
+        <button class="icon-btn" title="Turn sections off and close this panel" aria-label="Turn sections off" @click="emit('close')"><X :size="14" /></button>
+      </header>
+
+      <div class="sp-planes">
+        <div v-for="p in PLANES" :key="p.axis" class="sp-row" :class="{ on: activePlanes.has(p.axis) }">
+          <button class="sp-axis" :class="{ on: activePlanes.has(p.axis) }" :title="`${p.name} plane: ${activePlanes.has(p.axis) ? 'switch off' : 'switch on'}`" @click="emit('toggle', p.axis)">
+            <b>{{ p.axis.toUpperCase() }}</b><span>{{ p.name }}</span>
+          </button>
+          <input
+            class="sp-dist"
+            type="number"
+            step="0.1"
+            :disabled="!activePlanes.has(p.axis)"
+            :value="planeDistances[p.axis].toFixed(3)"
+            :title="`Where the ${p.name.toLowerCase()} plane cuts (you can also drag its handle)`"
+            @change="onDistance(p.axis, $event)"
+          />
+          <button class="sp-flip" :class="{ on: flip[p.axis] }" :disabled="!activePlanes.has(p.axis)" title="Flip which side of the plane is removed" @click="emit('flip', p.axis, !flip[p.axis])">
+            <ArrowLeftRight :size="13" /> Flip
+          </button>
+        </div>
+      </div>
+
+      <div class="sp-opts">
+        <button class="sp-chip" :class="{ on: planeVisible }" :title="planeVisible ? 'Hide the plane handles (P)' : 'Show the plane handles (P)'" @click="emit('update:planeVisible', !planeVisible)">
+          <component :is="planeVisible ? Eye : EyeOff" :size="13" /> Handles
+        </button>
+        <button class="sp-chip" :class="{ on: showCaps }" title="On: fill the cut ends. Off: leave the cut open to look into the parts" @click="emit('update:showCaps', !showCaps)">
+          <Check v-if="showCaps" :size="13" /><span v-else class="sp-nocheck" /> Cap the cut
         </button>
       </div>
-      <div class="section-panel-body">
-        <button class="section-item" @click="handleReset">
-          <CircleX class="section-icon" />
-          <span class="section-label">Reset cutting plane</span>
-        </button>
-        <label v-if="showCaps !== undefined" class="section-caps-row" title="Off: leave the cut open so you can see into the parts" @click.stop>
-          <input type="checkbox" :checked="showCaps" @change="emit('update:showCaps', ($event.target as HTMLInputElement).checked)" />
-          <span>Cap the cut (fill the ends)</span>
-        </label>
-        <button
-          class="section-item"
-          :class="{ 'section-item-active': activePlanes.has('face') }"
-          :disabled="!hasSelectedFace && !activePlanes.has('face')"
-          @click="handleFace(false)"
-        >
-          <span class="section-icon toolbar-cuttingplane-face"></span>
-          <span class="section-label">Selected face</span>
-          <div class="section-flip"></div>
-        </button>
-        <button
-          class="section-item"
-          :class="{ 'section-item-active': activePlanes.has('x') }"
-          @click="handleX(false)"
-        >
-          <CrossSectionIcon
-            :active="activePlanes.has('x')"
-            class="section-icon"
-          />
-          <span class="section-label">Right Plane</span>
-        </button>
-        <div
-          v-if="activePlanes.has('x')"
-          class="section-distance-row"
-          @click.stop
-        >
-          <span class="section-distance-label">X</span>
-          <input
-            type="number"
-            class="section-distance-input"
-            :value="planeDistances.x.toFixed(3)"
-            @change="onDistanceChange('x', $event)"
-            step="0.1"
-          />
-          <label class="section-flip-label" @click.stop>
-            <input
-              type="checkbox"
-              v-model="localFlipX"
-              @click.stop
-              @change="handleX(true)"
-            />
-            <span>Flip</span>
-          </label>
-        </div>
-        <button
-          class="section-item"
-          :class="{ 'section-item-active': activePlanes.has('y') }"
-          @click="handleY(false)"
-        >
-          <CrossSectionIcon
-            :active="activePlanes.has('y')"
-            class="section-icon"
-            :style="{ transform: 'rotate(-120deg)' }"
-          />
-          <span class="section-label">Top Plane</span>
-        </button>
-        <div
-          v-if="activePlanes.has('y')"
-          class="section-distance-row"
-          @click.stop
-        >
-          <span class="section-distance-label">Y</span>
-          <input
-            type="number"
-            class="section-distance-input"
-            :value="planeDistances.y.toFixed(3)"
-            @change="onDistanceChange('y', $event)"
-            step="0.1"
-          />
-          <label class="section-flip-label" @click.stop>
-            <input
-              type="checkbox"
-              v-model="localFlipY"
-              @click.stop
-              @change="handleY(true)"
-            />
-            <span>Flip</span>
-          </label>
-        </div>
-        <button
-          class="section-item"
-          :class="{ 'section-item-active': activePlanes.has('z') }"
-          @click="handleZ(false)"
-        >
-          <CrossSectionIcon
-            :active="activePlanes.has('z')"
-            class="section-icon"
-            :style="{ transform: 'rotate(120deg)' }"
-          />
-          <span class="section-label">Front Plane</span>
-        </button>
-        <div
-          v-if="activePlanes.has('z')"
-          class="section-distance-row"
-          @click.stop
-        >
-          <span class="section-distance-label">Z</span>
-          <input
-            type="number"
-            class="section-distance-input"
-            :value="planeDistances.z.toFixed(3)"
-            @change="onDistanceChange('z', $event)"
-            step="0.1"
-          />
-          <label class="section-flip-label" @click.stop>
-            <input
-              type="checkbox"
-              v-model="localFlipZ"
-              @click.stop
-              @change="handleZ(true)"
-            />
-            <span>Flip</span>
-          </label>
-        </div>
-        <slot />
-      </div>
-    </div>
+
+      <div v-if="$slots.default" class="sp-extra"><slot /></div>
+    </section>
   </Transition>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import { CircleX, SquareX } from "lucide-vue-next";
-import { CrossSectionIcon } from "../icons/customIcons";
+import { ArrowLeftRight, Check, Eye, EyeOff, Scissors, X } from "lucide-vue-next";
 
-const props = defineProps<{
+type Axis = "x" | "y" | "z";
+
+defineProps<{
   visible: boolean;
-  activePlanes: Set<"x" | "y" | "z" | "face">;
-  flipX: boolean;
-  flipY: boolean;
-  flipZ: boolean;
-  flipFace: boolean;
-  hasSelectedFace: boolean;
-  planeDistances: Record<"x" | "y" | "z", number>;
-  /** Whether the cut faces are filled; the option is hidden when not passed. */
-  showCaps?: boolean;
+  activePlanes: Set<Axis | "face">;
+  flip: Record<Axis, boolean>;
+  planeDistances: Record<Axis, number>;
+  showCaps: boolean;
+  planeVisible: boolean;
 }>();
 
 const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "clear"): void;
+  (e: "toggle", axis: Axis): void;
+  (e: "flip", axis: Axis, value: boolean): void;
+  (e: "setDistance", axis: Axis, distance: number): void;
   (e: "update:showCaps", value: boolean): void;
-  (e: "update:visible", value: boolean): void;
-  (e: "reset"): void;
-  (e: "face", fromCheckbox: boolean, flip: boolean): void;
-  (e: "planeX", fromCheckbox: boolean, flip: boolean): void;
-  (e: "planeY", fromCheckbox: boolean, flip: boolean): void;
-  (e: "planeZ", fromCheckbox: boolean, flip: boolean): void;
-  (e: "update:flipX", value: boolean): void;
-  (e: "update:flipY", value: boolean): void;
-  (e: "update:flipZ", value: boolean): void;
-  (e: "update:flipFace", value: boolean): void;
-  (e: "setDistance", axis: "x" | "y" | "z", distance: number): void;
+  (e: "update:planeVisible", value: boolean): void;
 }>();
 
-const localFlipX = ref(props.flipX);
-const localFlipY = ref(props.flipY);
-const localFlipZ = ref(props.flipZ);
-const localFlipFace = ref(props.flipFace);
+const PLANES: { axis: Axis; name: string }[] = [
+  { axis: "x", name: "Right" },
+  { axis: "y", name: "Top" },
+  { axis: "z", name: "Front" },
+];
 
-watch(
-  () => props.flipX,
-  (v) => (localFlipX.value = v),
-);
-watch(
-  () => props.flipY,
-  (v) => (localFlipY.value = v),
-);
-watch(
-  () => props.flipZ,
-  (v) => (localFlipZ.value = v),
-);
-watch(
-  () => props.flipFace,
-  (v) => (localFlipFace.value = v),
-);
-
-const handleReset = () => emit("reset");
-
-const handleFace = (fromCheckbox: boolean) => {
-  emit("update:flipFace", localFlipFace.value);
-  emit("face", fromCheckbox, localFlipFace.value);
-};
-
-const handleX = (fromCheckbox: boolean) => {
-  emit("update:flipX", localFlipX.value);
-  emit("planeX", fromCheckbox, localFlipX.value);
-};
-
-const handleY = (fromCheckbox: boolean) => {
-  emit("update:flipY", localFlipY.value);
-  emit("planeY", fromCheckbox, localFlipY.value);
-};
-
-const handleZ = (fromCheckbox: boolean) => {
-  emit("update:flipZ", localFlipZ.value);
-  emit("planeZ", fromCheckbox, localFlipZ.value);
-};
-
-const onDistanceChange = (axis: "x" | "y" | "z", event: Event) => {
-  const input = event.target as HTMLInputElement;
-  const val = parseFloat(input.value);
-  if (!Number.isNaN(val)) {
-    emit("setDistance", axis, val);
-  }
-};
+function onDistance(axis: Axis, event: Event) {
+  const val = parseFloat((event.target as HTMLInputElement).value);
+  if (!Number.isNaN(val)) emit("setDistance", axis, val);
+}
 </script>
 
 <style scoped>
-/* Migrated from global style.css */
-.section-caps-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 0.8125rem;
-  color: var(--neutral-10);
-  cursor: pointer;
-  user-select: none;
+.sp {
+  width: 292px; max-height: calc(100vh - 220px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--neutral-4); border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--neutral-1) 95%, transparent);
+  box-shadow: var(--shadow-md); color: var(--neutral-12);
+  pointer-events: auto;
 }
-.section-caps-row input {
-  margin: 0;
-  cursor: pointer;
+.sp-head { display: flex; align-items: center; gap: 6px; }
+.sp-link {
+  border: none; background: transparent; padding: 2px 4px; color: var(--accent-11); font: inherit; font-size: 0.76rem; font-weight: 600; cursor: pointer;
 }
-
-.section-flip {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.sp-link:disabled { color: var(--neutral-9); cursor: default; }
+.sp-link:hover:not(:disabled) { text-decoration: underline; }
+.sp-planes { display: flex; flex-direction: column; gap: 6px; }
+.sp-row { display: flex; align-items: center; gap: 6px; }
+.sp-axis {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  border: 1px solid var(--neutral-4); border-radius: var(--radius-md); background: var(--neutral-1);
+  color: var(--neutral-11); font: inherit; font-size: 0.8rem; cursor: pointer; text-align: left;
 }
-
-.section-flip-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.75rem;
-  color: var(--neutral-6);
-  cursor: pointer;
-  user-select: none;
+.sp-axis b { font-size: 0.82rem; width: 12px; }
+.sp-axis:hover { background: var(--neutral-3); }
+.sp-axis.on { background: var(--accent-3); border-color: var(--accent-7); color: var(--neutral-12); }
+.sp-dist {
+  width: 74px; padding: 4px 6px; border: 1px solid var(--neutral-5); border-radius: var(--radius-md);
+  background: var(--neutral-2); color: var(--neutral-12); font: inherit; font-size: 0.78rem; font-variant-numeric: tabular-nums; outline: none;
 }
-
-.section-flip-label input[type="checkbox"] {
-  cursor: pointer;
-  margin: 0;
+.sp-dist:focus { border-color: var(--accent-8); }
+.sp-dist:disabled { opacity: 0.45; }
+.sp-flip, .sp-chip {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 8px;
+  border: 1px solid var(--neutral-4); border-radius: var(--radius-md); background: var(--neutral-1);
+  color: var(--neutral-11); font: inherit; font-size: 0.76rem; font-weight: 600; cursor: pointer; white-space: nowrap;
 }
-
-.section-item-active .section-flip-label {
-  color: var(--accent-7);
-}
-
-.section-distance-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-}
-
-.section-distance-label {
-  font-size: 0.75rem;
-  color: var(--neutral-10);
-  min-width: 14px;
-  text-transform: uppercase;
-  font-weight: 600;
-}
-
-.section-distance-input {
-  width: 80px;
-  padding: 2px 6px;
-  border: 1px solid var(--neutral-5);
-  border-radius: 4px;
-  background: var(--neutral-2);
-  color: var(--neutral-12);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  outline: none;
-  transition: border-color 120ms ease;
-}
-
-.section-distance-input:focus {
-  border-color: var(--accent-8);
-}
-
-.toolbar-cuttingplane-reset,
-.toolbar-cuttingplane-face,
-.toolbar-cuttingplane-x,
-.toolbar-cuttingplane-y,
-.toolbar-cuttingplane-z,
-.toolbar-cuttingplane-hide {
-  width: 30px;
-  height: 30px;
-  background: url(/toolbarsprite.png) no-repeat top left;
-  display: block;
-}
-
-.toolbar-cuttingplane-reset {
-  background-position: -6px -49px;
-}
-
-.toolbar-cuttingplane-face {
-  background-position: -6px -49px;
-}
-
-.toolbar-cuttingplane-x {
-  background-position: -345px -266px;
-}
-
-.toolbar-cuttingplane-y {
-  background-position: -345px -220px;
-}
-
-.toolbar-cuttingplane-z {
-  background-position: -345px -180px;
-}
-
-.toolbar-cuttingplane-hide {
-  background-position: -6px -49px;
-}
+.sp-flip:hover:not(:disabled), .sp-chip:hover { background: var(--neutral-3); }
+.sp-flip:disabled { opacity: 0.45; cursor: default; }
+.sp-flip.on, .sp-chip.on { background: var(--accent-3); border-color: var(--accent-7); color: var(--neutral-12); }
+.sp-opts { display: flex; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--neutral-4); }
+.sp-chip { flex: 1; }
+.sp-nocheck { width: 13px; height: 13px; border: 1px solid var(--neutral-7); border-radius: 3px; display: inline-block; }
+.sp-extra { padding-top: 2px; margin: 0 -12px -2px; border-top: 1px dashed var(--neutral-4); }
+.sp-enter-active, .sp-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.sp-enter-from, .sp-leave-to { opacity: 0; transform: translateY(8px); }
 </style>

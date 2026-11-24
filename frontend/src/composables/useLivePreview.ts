@@ -13,7 +13,7 @@ export const TIO2_RANGE = [0.0005, 5] as const;
 export function useLivePreview(ws: Workspace) {
   const { solver, gpu, chosen } = useSolvers();
   const enabled = ref(false);
-  const rays = ref(400_000);
+  const rays = ref(10_000_000);
   /** 0 = trace all `rays`; otherwise stop earlier once the median noise per map pixel is below this fraction. */
   const targetNoise = ref(0);
   const run = shallowRef<RunMeta | null>(null);

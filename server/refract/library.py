@@ -425,21 +425,21 @@ BUILTIN_LEDS: dict[str, dict] = {
                 {
                     "id": "R",
                     "name": "Red (AlInGaP)",
-                    "flux_lm": 0.392,
+                    "flux_lm": 0.313,
                     "spectrum": {"type": "gaussian", "peak": 632, "fwhm": 17},
                     "pattern": {"type": "half_angle", "half_angle_deg": 65.0},
                 },
                 {
                     "id": "G",
                     "name": "Green (InGaN)",
-                    "flux_lm": 0.907,
+                    "flux_lm": 0.622,
                     "spectrum": {"type": "gaussian", "peak": 520, "fwhm": 35},
                     "pattern": {"type": "half_angle", "half_angle_deg": 65.0},
                 },
                 {
                     "id": "Y",
                     "name": "Yellow (AlInGaP)",
-                    "flux_lm": 0.611,
+                    "flux_lm": 0.491,
                     "spectrum": {"type": "gaussian", "peak": 595, "fwhm": 16},
                     "pattern": {"type": "half_angle", "half_angle_deg": 65.0},
                 },
@@ -452,7 +452,8 @@ BUILTIN_LEDS: dict[str, dict] = {
                 "absolute maximum DC 30 / 20 / 30 mA for red / green / yellow). From the datasheet: viewing angle 2 theta 1/2 = 130 deg "
                 "(a cos^m pattern with half-intensity angle 65 deg, m about 0.80), peak wavelengths 632 / 520 / 595 nm and spectral "
                 "half-widths 17 / 35 / 16 nm (modelled as Gaussians). Estimated: the datasheet gives only min/max intensity at 20 mA "
-                "(R 45-180, G 71-450, Y 71-280 mcd), so the middle of each range is used (112.5 / 260.5 / 175.5 mcd) and converted "
+                "(R 45-180, G 71-450, Y 71-280 mcd), so the geometric middle of each range, sqrt(min x max), is used (90.0 / 178.7 / 141.0 mcd; the bins are roughly "
+                "logarithmic, so this sits below the arithmetic middle) and converted "
                 "with flux = 2 pi I / (m + 1) = 3.48 x I for that pattern. Real parts vary by about +/-40 % in flux per channel (binning "
                 "codes P to T), so measure or bin-select a lot before trusting absolute levels. Also estimated: the size of the lit "
                 "window (1.5 x 1.5 mm) as the outline drawing could not be read."

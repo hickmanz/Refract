@@ -21,10 +21,6 @@ const gradient = cssGradient("turbo").replace("to top", "to right");
 
 <style scoped>
 .map-scale {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 8px;

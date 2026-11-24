@@ -169,7 +169,7 @@
 
       <PartsInfoCard :run-id="runId" :state="stateId" />
 
-      <RenderPanel :run-id="runId" :state="stateId" :detectors="result.detectors" :detector="detIdx" />
+      <RenderPanel :run-id="runId" :state="stateId" :detectors="result.detectors" :detector="detIdx" :projection="projection" />
     </template>
   </div>
 </template>
@@ -190,7 +190,7 @@ import NoiseBadge from "./NoiseBadge.vue";
 import PartsInfoCard from "./PartsInfoCard.vue";
 import type { AnalysisCtx } from "../composables/useAnalysisView";
 
-const props = defineProps<{ runId: string }>();
+const props = defineProps<{ runId: string; projection?: "perspective" | "orthographic" }>();
 const emit = defineEmits<{ loaded: [result: StateResult, detector: number, vmax: number]; "request-compare": []}>();
 
 const stateId = ref<string | undefined>(undefined);

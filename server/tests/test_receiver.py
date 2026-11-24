@@ -231,3 +231,69 @@ def test_receiver_is_drawn_with_its_own_finish():
     bsdf = M._receiver_bsdf(scene, scene.detectors[1])
     assert bsdf["type"] == "twosided" and bsdf["bsdf"]["type"] == "diffuse"
     assert bsdf["bsdf"]["reflectance"]["value"][0] == pytest.approx(RHO, abs=0.02)  # white_diffuse
+
+
+def _two_surface_run_data(through=True, n=150_000):
+    """A RunData (what simrun stores, without the files) of the plate-over-table setup: the exit surface and the table."""
+    from refract.results import RunData
+
+    b, setup = _plate_over_table(through)
+    scene, src, t = run(b, setup, library_with(glass={"n": 1.5, "absorption": 0.0}), n=n)
+    arrays = {k: np.asarray(getattr(t, k))[None] for k in ("ex", "cone", "ex2", "cone2", "ring", "ring2", "dirh", "det_pow", "abs_vol", "abs_surf", "special", "rcv_pow")}
+    arrays.update(w0=np.array([src.flux_w / t.n_rays]), n_rays=np.array([t.n_rays]), accounted=np.ones(1), flux_lm=np.array([src.flux_lm]))
+    dets = []
+    for k, d in enumerate(scene.detectors):
+        arrays[f"area_map_{k}"] = d.area_map
+        dets.append({"nu": d.nu, "nv": d.nv, "offset": d.offset, "cone_deg": d.cone_deg, "ring_deg": d.ring_deg.tolist(), "ext": d.ext.tolist(), "view_cos": d.view_cos})
+    sc = {
+        "detectors": dets,
+        "channels": [{"key": "c", "led_id": "l", "led_name": "l", "flux_w": src.flux_w, "flux_lm": src.flux_lm}],
+        "states": [{"id": "s", "name": "s", "drive": {"c": 1.0}}],
+        "bodies": [],
+        "warnings": [],
+    }
+    return RunData("r", "x", sc, arrays, {}), scene, src, t
+
+
+def test_picture_luminances_are_real_cd_per_m2(monkeypatch):
+    """The luminances of the picture (exit_maps) are photometric: the exit surface carries the flux that leaves through it, and the table
+    sends rho times the flux it receives (all in lm and cd/m^2). The studio light and the exposure are tied to these numbers."""
+    from refract import results
+    from refract.render import mitsuba_export as mx
+
+    data, scene, src, t = _two_surface_run_data()
+    monkeypatch.setattr(results.RunData, "load", classmethod(lambda cls, rid, runid: data))
+    maps, peak = mx.exit_maps("r", "x", "s", 0.0)
+    y = np.array([0.2126, 0.7152, 0.0722])
+    lum = [(m @ y) * peak for m in maps]  # cd/m^2 of each pixel
+    flux_lm = float(src.flux_lm)
+    # the exit surface: the luminous flux through it is the LED's flux times the share of the power that goes through
+    comb = data.combine("s")
+    ex = data.detector_maps(comb, 0, results.DEFAULT_ANALYSIS)["ex"][..., 1]
+    assert ex.sum() == pytest.approx(flux_lm * t.rcv_pow[0] / t.n_rays, rel=0.03)
+    # the table: reflected flux = rho * received flux = pi * sum(L * dA) for a Lambertian table
+    a1 = scene.detectors[1].area_map * 1e-6
+    reflected = math.pi * float((lum[1] * a1).sum())
+    assert reflected == pytest.approx(RHO * flux_lm * t.rcv_pow[1] / t.n_rays, rel=0.1)
+    assert max(float(m.max()) for m in maps) == pytest.approx(1.0)
+
+
+def test_picture_reference_is_not_set_by_one_hot_pixel_and_numbers_are_reported(monkeypatch):
+    """The "bright" level of the picture counts every pixel for its area, so the big table keeps a sensible exposure next to a small
+    exit surface that is a thousand times brighter; the per-surface numbers are the ones shown next to the picture."""
+    from refract import results
+    from refract.render import mitsuba_export as mx
+
+    data, scene, src, t = _two_surface_run_data()
+    monkeypatch.setattr(results.RunData, "load", classmethod(lambda cls, rid, runid: data))
+    _, peak, info = mx.exit_maps_info("r", "x", "s", 1.0)
+    assert [s["index"] for s in info["surfaces"]] == [0, 1]
+    exit_s, table_s = info["surfaces"]
+    assert table_s["mean"] > 0 and exit_s["mean"] > 5 * table_s["mean"]  # the exit is far brighter than the table
+    assert 0 < info["reference"] < peak / 3  # one bright spot of the small exit surface does not set it
+    _, _, info1 = mx.exit_maps_info("r", "x", "s", 1.0, hidden=(0,))
+    assert [s["index"] for s in info1["surfaces"]] == [1]  # a hidden surface is not reported
+    assert mx.white_card_luminance(300.0) == pytest.approx(300.0 / math.pi)
+    vals = np.array([1.0, 2.0, 3.0, 100.0])
+    assert mx._weighted_percentile(vals, np.array([1.0, 1.0, 1.0, 0.001]), 99.5) == pytest.approx(3.0)
+    assert mx._weighted_percentile(vals, np.array([1.0, 1.0, 1.0, 100.0]), 99.5) == pytest.approx(100.0)

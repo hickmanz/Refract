@@ -226,17 +226,80 @@ def hidden_exits(view: dict) -> tuple[int, ...]:
     return tuple(sorted({int(i) for i in (view.get("hidden_exits") or [])}))
 
 
-def exit_maps(rid: str, runid: str, state_id: str | None, view_smooth: float = 1.0, hidden: tuple[int, ...] = ()) -> tuple[list[np.ndarray], float]:
-    """The radiance map of every exit surface of a run, normalised to 0..1, and the peak radiance (W/(m^2 sr)) they were divided by.
+TRANSPORT_UNITS = 9.0e10  # see live_view: Mitsuba's radiance of the LED emitters against the exit-surface map in cd/m^2 (a unit conversion)
+DEFAULT_ROOM_LUX = 500.0  # a normal office: the illuminance on a surface that faces the camera
+# The exposure of a picture is fixed, like a camera that is not changed between shots: this luminance (cd/m^2) becomes the reference level
+# (0.6 of the display range). It is the white card of a 500 lux room, so the default room is well exposed, a dim room looks dim and a
+# bright one burns out, and the glow of a surface has the same brightness whatever else is lit. "Auto exposure" picks the level from the
+# lit surfaces instead.
+FIXED_EXPOSURE_LUMINANCE = 160.0
 
-    Surfaces listed in ``hidden`` are not drawn: their map is all zero and they do not take part in the peak, so the picture is
-    exposed for the surfaces that are shown.
+
+def white_card_luminance(room_lux: float) -> float:
+    """cd/m^2 of a white (reflectance 1) Lambertian card facing the camera in a room of ``room_lux`` lux: E / pi."""
+    return max(float(room_lux), 0.0) / math.pi
+
+
+def _weighted_percentile(values: np.ndarray, weights: np.ndarray, q: float) -> float:
+    """The ``q`` percent point of ``values`` when every value counts ``weights`` (here: the area of its pixel)."""
+    values, weights = np.asarray(values, dtype=np.float64).ravel(), np.asarray(weights, dtype=np.float64).ravel()
+    keep = (weights > 0) & np.isfinite(values)
+    if not keep.any():
+        return 0.0
+    values, weights = values[keep], weights[keep]
+    order = np.argsort(values)
+    cum = np.cumsum(weights[order])
+    return float(values[order][min(int(np.searchsorted(cum, cum[-1] * q / 100.0)), len(values) - 1)])
+
+
+# Mitsuba's spectral variants turn the RGB of a bitmap emitter into a smooth spectrum but, unlike for a plain RGB colour, do not weight it
+# with the D65 illuminant, so equal RGB comes out as an equal-energy (reddish) light: white 1 : 1 : 1 renders as 1 : 0.79 : 0.76, and the
+# yellow of red + green as orange. The response of the render to a bitmap colour is almost linear (the mean error of this matrix is
+# 0.3 %, the worst 2.6 %), measured by rendering a patch of every colour in cuda_ad_spectral: rendered = bitmap @ this matrix.
+# (The RGB variants are exact, but only the spectral ones can run the full light transport mode.)
+_SPECTRAL_BITMAP_RESPONSE = np.array([[1.151, -0.002, -0.002], [0.051, 0.956, -0.012], [0.017, -0.006, 0.916]])
+
+
+def _spectral_bitmap_correction() -> np.ndarray | None:
+    """The matrix to apply to the colours of a bitmap emitter so that the render shows them as they are, or None when the Mitsuba variant
+    in use renders them exactly (an RGB variant) or Mitsuba is not in use."""
+    try:
+        import mitsuba as mi
+
+        variant = mi.variant()
+    except Exception:
+        return None
+    return np.linalg.inv(_SPECTRAL_BITMAP_RESPONSE) if variant and "spectral" in variant else None
+
+
+def exit_maps(rid: str, runid: str, state_id: str | None, view_smooth: float = 1.0, hidden: tuple[int, ...] = ()) -> tuple[list[np.ndarray], float]:
+    """The luminance map of every exit surface of a run, normalised to 0..1, and the peak (cd/m^2) they were divided by.
+
+    See :func:`exit_maps_info` for what else is known about them.
+    """
+    maps, peak, _ = exit_maps_info(rid, runid, state_id, view_smooth, hidden)
+    return maps, peak
+
+
+def exit_maps_info(rid: str, runid: str, state_id: str | None, view_smooth: float = 1.0, hidden: tuple[int, ...] = ()) -> tuple[list[np.ndarray], float, dict]:
+    """``(maps, peak, info)``: the map of every exit surface normalised to 0..1, the peak (cd/m^2) they were divided by, and ``info``.
+
+    The maps are photometric: a pixel's value times ``peak`` is its luminance in cd/m^2 (the simulation counts lumens, so
+    ``cone / (area * pi * sin^2(cone))`` is cd/m^2). Surfaces listed in ``hidden`` are not drawn: their map is all zero and they do
+    not take part in the peak, so the picture is exposed for the surfaces that are shown.
+
+    ``info["surfaces"]``: per lit surface its index, peak and area-weighted mean luminance (cd/m^2). ``info["reference"]``: a
+    robust "bright" level of the picture (the 99.5th percentile of the lit pixels, every pixel counting for its area), which a
+    small, very bright exit surface does not dominate the way it dominates the peak.
     """
     from ..results import DEFAULT_ANALYSIS, RunData
 
     data = RunData.load(rid, runid)
     comb = data.combine(state_id or data.state_ids()[0])
     maps_rgb: list[tuple[int, object, np.ndarray]] = []
+    surfaces: list[dict] = []
+    ref_values: list[np.ndarray] = []
+    ref_weights: list[np.ndarray] = []
     for k, det in enumerate(data.scene["detectors"]):
         if k in hidden:
             maps_rgb.append((k, det, np.zeros((1, 1, 3), dtype=np.float32)))  # placeholder: a hidden surface has no emitter
@@ -256,13 +319,31 @@ def exit_maps(rid: str, runid: str, state_id: str | None, view_smooth: float = 1
             xyz = np.where(area[..., None] > 0, cone / (area_s[..., None] * 1e-6 * math.pi * sin2), 0.0)
         rgb = np.clip(xyz @ _XYZ_TO_RGB.T, 0.0, None).astype(np.float32)
         maps_rgb.append((k, det, rgb))
+        y = np.asarray(xyz[..., 1], dtype=np.float64)
+        on = area > 0
+        surfaces.append(
+            {
+                "index": k,
+                "peak": float(y[on].max()) if on.any() else 0.0,
+                "mean": float((y[on] * area[on]).sum() / area[on].sum()) if on.any() else 0.0,
+            }
+        )
+        ref_values.append(rgb.max(axis=-1))
+        ref_weights.append(np.where(on, area, 0.0))
     peak = max((float(r.max()) for _, _, r in maps_rgb), default=0.0)
     if peak <= 0:
         if hidden and len(hidden) >= len(maps_rgb):
             raise ValueError("Every exit surface is switched off in the picture. Show at least one.")
         raise ValueError("The exit surface received no light in this state")
+    reference = _weighted_percentile(np.concatenate([v.ravel() for v in ref_values]), np.concatenate([w.ravel() for w in ref_weights]), 99.5) if ref_values else 0.0
+    info = {"surfaces": surfaces, "reference": reference if reference > 0 else peak * 0.9}
+    maps_out = [r for _, _, r in maps_rgb]
+    fix = _spectral_bitmap_correction()
+    if fix is not None:  # (the light a bitmap emitter gives in the spectral variants is not the colour in the bitmap: put that right)
+        maps_out = [np.clip(r @ fix, 0.0, None) for r in maps_out]
+        peak = max(float(r.max()) for r in maps_out)
     # bitmap emitters are reflectance-like (0..1); the scale is put back after rendering
-    return [(r / peak).astype(np.float32) for _, _, r in maps_rgb], peak
+    return [(r / peak).astype(np.float32) for r in maps_out], peak, info
 
 
 def detector_normal(scene: Scene, det) -> np.ndarray:
@@ -293,8 +374,16 @@ def _exit_emitters(rid: str, runid: str, scene: Scene, state_id: str, outdir: Pa
     """Exit surfaces drawn from the simulation: each detector map becomes a Lambertian emitter texture (except the hidden ones)."""
     import mitsuba as mi
 
-    maps, peak = exit_maps(rid, runid, state_id, view_smooth, hidden)
+    maps, peak, info = exit_maps_info(rid, runid, state_id, view_smooth, hidden)
     out: dict = {}
+    black = {"type": "diffuse", "reflectance": {"type": "rgb", "value": [0.0, 0.0, 0.0]}}
+    shown = [k for k in range(len(scene.detectors)) if k not in hidden]
+    # A receiver's map already holds all the light the simulation sent to it. Another lit surface (a pass-through exit above a table)
+    # is an emitter in the picture and would light the finish of the receiver a second time. So when a receiver is drawn together with
+    # another surface, the receivers are black in this scene (just their glow), and their finish, lit by the room light only, goes into a
+    # second scene (``_room``) whose picture is added to this one.
+    split = len(shown) >= 2 and any(scene.detectors[k].kind == "receiver" for k in shown)
+    room: dict = {}
     for k, (det, rgb) in enumerate(zip(scene.detectors, maps)):
         if k in hidden:
             continue
@@ -304,14 +393,19 @@ def _exit_emitters(rid: str, runid: str, scene: Scene, state_id: str, outdir: Pa
             _write_soup_uv(path, det.mesh, scene.eps * 4)
         else:
             _write_quad_uv(path, det.corners + n * scene.eps * 4, n)
+        finish = _receiver_bsdf(scene, det) if det.kind == "receiver" else black
         out[f"exit_{k}"] = {
             "type": "ply",
             "filename": str(path),
             "flip_tex_coords": False,
-            "bsdf": _receiver_bsdf(scene, det) if det.kind == "receiver" else {"type": "diffuse", "reflectance": {"type": "rgb", "value": [0.0, 0.0, 0.0]}},
+            "bsdf": black if (split and det.kind == "receiver") else finish,
             "emitter": {"type": "area", "radiance": {"type": "bitmap", "bitmap": mi.Bitmap(rgb), "filter_type": "bilinear"}},
         }
+        if split and det.kind == "receiver":
+            room[f"exit_{k}"] = {"type": "ply", "filename": str(path), "flip_tex_coords": False, "bsdf": finish}
     out["_scale"] = peak
+    out["_info"] = info
+    out["_room"] = room
     return out
 
 
@@ -324,6 +418,8 @@ def build_mitsuba_scene(rid: str, setup: dict, library: dict, state_id: str | No
     """
     mode = view.get("mode", "map")
     radiance_scale = 1.0
+    exit_info: dict = {"surfaces": [], "reference": 0.0}
+    room_shapes: dict = {}  # map mode, a receiver drawn with another surface: the receivers' finish, in a second scene lit by the room only
     import mitsuba as mi
 
     select_variant()
@@ -373,6 +469,8 @@ def build_mitsuba_scene(rid: str, setup: dict, library: dict, state_id: str | No
             raise ValueError("The simulation run is needed to draw the exit surface")
         ex = _exit_emitters(rid, runid, scene, state["id"], outdir, warnings, float(view.get("smooth", 1.0)), hidden_exits(view))
         radiance_scale = float(ex.pop("_scale"))
+        exit_info = ex.pop("_info")
+        room_shapes = ex.pop("_room")
         d.update(ex)
         warnings.append("The exit surface is drawn from the simulation result as a Lambertian surface. The sides of the light pipe are shown dark.")
         if any(dd.kind == "receiver" for dd in scene.detectors):
@@ -386,31 +484,44 @@ def build_mitsuba_scene(rid: str, setup: dict, library: dict, state_id: str | No
 
     # -- camera ------------------------------------------------------------------------------------
     cam = _camera(scene, view)
-    amb = float(view.get("ambient", 0.04 if mode == "map" else 0.0))
-    if amb > 0:
-        # a soft studio environment so that the housing and the reflections in the parts can be seen. A white surface
-        # facing the camera has a radiance of ``amb`` times the brightest radiance of the exit surface (in a transport
-        # picture the caller rescales it per frame).
-        d["environment"] = {
+    lux = max(float(view.get("room_lux", DEFAULT_ROOM_LUX if mode == "map" else 0.0)), 0.0)
+    card = white_card_luminance(lux)
+    if lux > 0:
+        # a soft studio environment so that the housing and the reflections in the parts can be seen. It is a real room:
+        # a white surface facing the camera has a luminance of lux / pi cd/m^2. The pictures are in units of the peak of the exit
+        # surfaces (map; the caller multiplies by ``radianceScale``) or of the Mitsuba emitters (transport, see TRANSPORT_UNITS).
+        env = {
             "type": "envmap",
             "bitmap": studio_bitmap(),
-            "scale": amb,
+            "scale": card / (radiance_scale if mode == "map" else TRANSPORT_UNITS),
             "to_world": mi.ScalarTransform4f(environment_matrix(cam["origin"], cam["target"], cam["up"]).tolist()),
         }
+        if not room_shapes:
+            d["environment"] = env
     width = int(view.get("width", 640))
     height = max(int(round(width / float(view.get("aspect", 1.6)))), 16)
+    look_at = mi.ScalarTransform4f().look_at(origin=cam["origin"], target=cam["target"], up=cam["up"])
+    if cam["projection"] == "orthographic":
+        # the same framing as the perspective picture at the target: Mitsuba's orthographic camera shows a half width of its scale
+        half_width = cam["distance"] * math.tan(math.radians(cam["fov"]) / 2.0)
+        sensor: dict = {"type": "orthographic", "to_world": look_at @ mi.ScalarTransform4f().scale([half_width, half_width, 1.0])}
+    else:
+        sensor = {"type": "perspective", "fov": cam["fov"], "fov_axis": "x", "to_world": look_at}
     d["sensor"] = {
-        "type": "perspective",
-        "fov": cam["fov"],
-        "fov_axis": "x",
+        **sensor,
         "near_clip": max(scene.diag * 1e-3, 0.01),
         "far_clip": scene.diag * 20,
-        "to_world": mi.ScalarTransform4f().look_at(origin=cam["origin"], target=cam["target"], up=cam["up"]),
         "sampler": {"type": "multijitter", "sample_count": int(view.get("spp", 64))},
         "film": {"type": "hdrfilm", "width": width, "height": height, "pixel_format": "rgb", "component_format": "float32", "rfilter": {"type": "gaussian"}},
     }
     d["integrator"] = {"type": "volpathmis", "max_depth": int(view.get("max_depth", 64)), "rr_depth": 6}
-    info = {"warnings": warnings, "camera": {k: cam[k] for k in ("origin", "target", "up", "fov", "distance")}, "radianceScale": radiance_scale, "state": state["id"], "size": [width, height]}
+    room_scene = None
+    if room_shapes and lux > 0:  # (in a dark room nothing lights the finish of the receivers: only their glow shows)
+        # the second picture (see _exit_emitters): the model and the finish of the receivers under the room light, without the glowing surfaces
+        room_scene = {k: v for k, v in d.items() if k in ("type", "sensor", "integrator") or (k.startswith("b") and k[1:2].isdigit())}
+        room_scene.update(room_shapes)
+        room_scene["environment"] = env
+    info = {"warnings": warnings, "camera": {k: cam[k] for k in ("origin", "target", "up", "fov", "distance", "projection")}, "radianceScale": radiance_scale, "state": state["id"], "size": [width, height], "roomLux": lux, "whiteCard": card, "exitInfo": exit_info, "roomScene": room_scene}
     return d, info
 
 
@@ -489,7 +600,8 @@ def _camera(scene: Scene, view: dict) -> dict:
     if np.linalg.norm(up) < 1e-6:
         up = right
     up = up / np.linalg.norm(up)
-    return {"origin": origin.tolist(), "target": center.tolist(), "up": up.tolist(), "fov": fov, "distance": dist}
+    projection = "orthographic" if view.get("projection") == "orthographic" else "perspective"
+    return {"origin": origin.tolist(), "target": center.tolist(), "up": up.tolist(), "fov": fov, "distance": dist, "projection": projection}
 
 
 def render_to_png(rid: str, runid: str, state_id: str | None, view: dict, outdir: Path, progress) -> dict:
@@ -507,8 +619,10 @@ def render_to_png(rid: str, runid: str, state_id: str | None, view: dict, outdir
         raise ValueError("The run has no setup snapshot")
     progress("Building the Mitsuba scene", 0.02)
     desc, info = build_mitsuba_scene(rid, setup, library, state_id, view, outdir / "meshes", runid)
+    room_desc = info.pop("roomScene", None)  # (a receiver drawn with another surface: its finish under the room light is a second picture)
     progress("Rendering", 0.1)
     scene = mi.load_dict(desc)
+    room = mi.load_dict(room_desc) if room_desc else None
     spp = max(int(view.get("spp", 64)), 1)
     gpu = variant.startswith("cuda")
     # the GPU renders all samples of a pass at once: keep a pass to a few million so memory stays small
@@ -518,6 +632,8 @@ def render_to_png(rid: str, runid: str, state_id: str | None, view: dict, outdir
     acc = None
     for i in range(passes):
         part = np.array(mi.render(scene, spp=per_pass, seed=i)).astype(np.float64)
+        if room is not None:
+            part = part + np.array(mi.render(room, spp=per_pass, seed=i + 7919)).astype(np.float64)
         acc = part if acc is None else acc + part
         progress("Rendering", 0.1 + 0.85 * (i + 1) / passes)
     img = acc / passes
@@ -525,7 +641,15 @@ def render_to_png(rid: str, runid: str, state_id: str | None, view: dict, outdir
     progress("Saving the image", 0.97)
     rgb = img[..., :3].astype(np.float64) * float(info.get("radianceScale", 1.0))
     np.save(outdir / "image.npy", rgb.astype(np.float32))
-    png = tonemap(rgb, float(view.get("exposure", 0.0)), 99.5 if view.get("mode", "map") == "map" else 90.0, bool(view.get("white_balance", True)))
+    # exposure like a camera with fixed settings (the same whatever the room light), or, when asked, set from the lit surfaces
+    unit = 1.0 if view.get("mode", "map") == "map" else TRANSPORT_UNITS
+    mode = str(view.get("exposure_mode", "fixed"))
+    if mode == "surfaces":
+        ref = float(info.get("exitInfo", {}).get("reference") or 0.0) / unit or None  # (a transport picture has none: its own level)
+    else:
+        card = float(info.get("whiteCard") or 0.0)  # "room": a white card in the room light is mid-grey (a dark room keeps the fixed exposure)
+        ref = (card if (mode == "room" and card > 0) else FIXED_EXPOSURE_LUMINANCE) / unit
+    png = tonemap(rgb, float(view.get("exposure", 0.0)), 99.5 if view.get("mode", "map") == "map" else 90.0, bool(view.get("white_balance", True)), reference=ref)
     from PIL import Image
 
     Image.fromarray(png).save(outdir / "image.png")
@@ -548,9 +672,13 @@ def tonemap(rgb: np.ndarray, exposure_stops: float = 0.0, percentile: float = 90
         ref = 1.0
     x = np.clip(rgb / ref * 0.6 * (2.0**exposure_stops), 0.0, None)
     peak = x.max(axis=2, keepdims=True)
-    # soft shoulder on the brightest channel, applied to all three so that hue is kept
+    # soft shoulder on the brightest channel, applied to all three so that hue is kept. It starts at the white
+    # card (0.6) and rolls off slowly (never reaching 1), so a light that is several times brighter than the
+    # card (an LED exit) keeps some gradation instead of clipping to flat white.
+    knee, head = 0.6, 0.4
     with np.errstate(divide="ignore", invalid="ignore"):
-        shoulder = np.where(peak <= 0.8, peak, 0.8 + 0.2 * np.tanh((peak - 0.8) / 0.2))
+        t = np.maximum(peak - knee, 0.0) / head
+        shoulder = np.where(peak <= knee, peak, knee + head * t / (1.0 + t))
         x = np.where(peak > 0, x * (shoulder / np.maximum(peak, 1e-30)), 0.0)
     x = np.clip(x, 0.0, 1.0)
     srgb = np.where(x <= 0.0031308, 12.92 * x, 1.055 * np.power(x, 1 / 2.4) - 0.055)

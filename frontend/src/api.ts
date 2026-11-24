@@ -333,8 +333,13 @@ export interface RenderSettings {
   /** The exit surface / receiver (index in the setup) the camera looks at. */
   detector?: number;
   zoom: number;
+  /** The projection of the picture (the 3D view's camera). */
+  projection?: "perspective" | "orthographic";
   exposure: number;
-  ambient?: number;
+  /** Illuminance of the room light on a surface facing the camera, in lux (0: a dark room). */
+  room_lux?: number;
+  /** How the picture is exposed: a fixed camera, for the room light (a white card is mid-grey) or from the lit surfaces. */
+  exposure_mode?: "fixed" | "room" | "surfaces";
   white_balance: boolean;
   /** Exit surfaces (indices in the setup) left dark in the picture; empty or missing draws all of them. */
   hidden_exits?: number[];
@@ -411,15 +416,24 @@ export interface LiveFrameRequest {
   spp: number;
   quality?: number;
   exposure?: number;
-  ambient?: number;
+  /** Illuminance of the room light on a surface facing the camera, in lux (0: a dark room). */
+  room_lux?: number;
+  /** How the picture is exposed: a fixed camera, for the room light (a white card is mid-grey) or from the lit surfaces. */
+  exposure_mode?: "fixed" | "room" | "surfaces";
   state?: string | null;
   white_balance?: boolean;
   mode?: "map" | "transport";
   /** Exit surfaces (indices in the setup) left dark in the picture (map mode). */
   hidden_exits?: number[];
 }
+/** The numbers behind a live picture, in cd/m2: a white card in the room, and per lit exit surface (index in the setup) its peak and mean. */
+export interface LiveLuminance {
+  card: number;
+  lux: number;
+  surfaces: { index: number; peak: number; mean: number }[];
+}
 export type LiveFrame =
-  | { kind: "image"; blob: Blob; spp: number; rays: number; ms: number; variant: string }
+  | { kind: "image"; blob: Blob; spp: number; rays: number; ms: number; variant: string; lum: LiveLuminance | null }
   | { kind: "status"; status: "starting" | "waiting" | "error"; reason?: string; error?: string };
 export interface SweepInfo {
   id: string;
@@ -1130,7 +1144,13 @@ export const api = {
       throw new ApiError(message, res.status);
     }
     const h = (k: string) => Number(res.headers.get(k) ?? 0);
-    return { kind: "image", blob: await res.blob(), spp: h("X-Spp"), rays: h("X-Rays"), ms: h("X-Ms"), variant: res.headers.get("X-Variant") ?? "" };
+    let lum: LiveLuminance | null = null;
+    try {
+      lum = JSON.parse(res.headers.get("X-Lum") || "null");
+    } catch {
+      /* the numbers are optional */
+    }
+    return { kind: "image", blob: await res.blob(), spp: h("X-Spp"), rays: h("X-Rays"), ms: h("X-Ms"), variant: res.headers.get("X-Variant") ?? "", lum };
   },
 
   // library

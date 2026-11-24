@@ -110,6 +110,11 @@
   cursor: pointer;
 }
 .chip-btn:hover { background: var(--neutral-3); }
+.chip-btn.on { background: var(--accent-3, var(--neutral-3)); border-color: var(--accent-9); color: var(--accent-11, var(--neutral-12)); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+/* a row of quick picks that always stays on one line: equal columns, tight padding */
+.chip-row.one-line { display: grid; grid-template-columns: repeat(var(--chips, 6), minmax(0, 1fr)); gap: 3px; }
+.chip-row.one-line .chip-btn { padding: 2px 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
 
 /* ───────── side panel tabs ───────── */
 .refract .side {
@@ -649,13 +654,10 @@
 .live-view-canvas.shown {
   opacity: 1;
 }
+/* Live and Analysis are cards in the right dock (see .right-dock): they share its column and shrink to scroll */
 .live-panel {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 60;
-  width: 300px;
-  max-height: calc(100% - 80px);
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -681,17 +683,42 @@
   align-items: center;
   gap: 6px;
 }
+.live-panel.collapsed, .analysis-dock.collapsed { flex-shrink: 0; overflow: hidden; }
+.dock-body { display: flex; flex-direction: column; gap: 8px; }
+.dock-sub-head { margin: 0; font-size: 0.68rem; font-weight: 700; color: var(--neutral-10); text-transform: uppercase; letter-spacing: 0.04em; }
+.live-more > summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--neutral-11); }
+.live-more { display: flex; flex-direction: column; gap: 8px; }
+.live-more[open] > summary { margin-bottom: 2px; }
 .live-status {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+.live-status-text { flex: 1; min-width: 0; }
+.live-quality { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.live-quality .mini { min-width: 0; }
+.live-quality .mini:nth-child(3) { grid-column: 1 / -1; }
+/* a toggle switch: the checkbox stays in the DOM for keyboard and screen readers */
+.tog { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; user-select: none; }
+.tog input { position: absolute; opacity: 0; width: 0; height: 0; }
+.tog-track {
+  position: relative; flex: none; width: 32px; height: 18px; border-radius: 999px;
+  background: var(--neutral-6); transition: background 0.15s;
+}
+.tog-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); transition: transform 0.15s;
+}
+.tog input:checked + .tog-track { background: var(--accent-9); }
+.tog input:checked + .tog-track::after { transform: translateX(14px); }
+.tog input:focus-visible + .tog-track { outline: 2px solid var(--accent-9); outline-offset: 2px; }
+.tog:hover .tog-track { filter: brightness(1.08); }
 .live-status .ok-icon {
   color: var(--radix-green-9, #16a34a);
 }
 .live-metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 6px 10px;
 }
 .live-metrics > div {
@@ -724,6 +751,16 @@
 .exit-pick > .small:first-child {
   color: var(--neutral-11);
 }
+.lum-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--neutral-11);
+}
+.lum-readout strong {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
 .exit-pick .check {
   box-shadow: none;
   border: none;
@@ -753,12 +790,8 @@
 }
 /* ── light path analysis ───────────────────────────────────────────────────── */
 .analysis-dock {
-  position: absolute;
-  right: 12px;
-  top: 56px;
-  z-index: 60;
-  width: 330px;
-  max-height: calc(100% - 80px);
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

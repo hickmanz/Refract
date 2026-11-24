@@ -137,38 +137,85 @@
         <canvas ref="canvasEl" class="viewer-host" @contextmenu.prevent="onCanvasContextMenu" />
 
         <div v-if="ws.ready.value || ws.meta.value?.model_ready" class="viewbar" @click.stop>
-          <div class="tgroup" title="Cut through the model. Drag the plane's handle in the 3D view to move the cut.">
-            <span class="tgroup-icon"><Scissors :size="14" /></span>
-            <button class="tbtn" :class="{ on: activePlanes.size === 0 }" @click="viewer.resetCuttingPlanes()">Off</button>
-            <button v-for="a in ['x', 'y', 'z'] as const" :key="a" class="tbtn" :class="{ on: activePlanes.has(a) }" @click="togglePlane(a)">{{ a.toUpperCase() }}</button>
-            <button
-              class="tbtn icon"
-              :class="{ on: planeVisible }"
-              :title="planeVisible ? 'Hide the cutting-plane handle (P)' : 'Show the cutting-plane handle (P)'"
-              aria-label="Show or hide the cutting-plane handle"
-              @click="setPlaneVisible(!planeVisible)"
-            >
-              <component :is="planeVisible ? Eye : EyeOff" :size="15" />
-            </button>
-            <button class="tbtn icon" :class="{ on: sectionPanelOpen }" title="Section planes: distances and flip" aria-label="Section planes" @click="sectionPanelOpen = !sectionPanelOpen">
-              <Slice :size="16" />
-            </button>
+          <!-- left: how the model is looked at -->
+          <div class="vb-left">
+            <div class="tgroup">
+              <button class="tbtn icon" :class="{ on: treeOpen }" title="Model tree (T)" aria-label="Model tree" @click="toggleTree"><ListTree :size="16" /></button>
+              <button
+                class="tbtn"
+                :class="{ on: sectionsOn }"
+                :title="sectionsOn ? 'Turn sections off and remove the cuts' : 'Cut through the model: opens the Sections panel. Drag a plane handle in the 3D view to move the cut.'"
+                @click="toggleSections"
+              >
+                <Scissors :size="15" /><span class="tlabel">Sections</span>
+              </button>
+
+              <ToolbarPopover>
+                <template #trigger="{ open, toggle }">
+                  <button class="tbtn" :class="{ on: open }" title="What is shown in the 3D view" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+                    <Eye :size="15" /><span class="tlabel">Display</span>
+                    <span v-if="displayChanged" class="tbadge">{{ displayChanged }}</span>
+                    <ChevronDown :size="11" class="tbtn-caret" />
+                  </button>
+                </template>
+                <template #default>
+                  <div class="tpop-head">Show in the 3D view</div>
+                  <button class="tpop-row" :class="{ on: allTransparent }" role="menuitemcheckbox" :aria-checked="allTransparent" title="Make every part transparent, to see what is inside" @click="allTransparent = !allTransparent">
+                    <Blend :size="16" /><span class="tpop-text"><strong>See-through</strong><small>Every part transparent</small></span><span class="tpop-check"><Check v-if="allTransparent" :size="14" /></span>
+                  </button>
+                  <button class="tpop-row" :class="{ on: dimOthers }" role="menuitemcheckbox" :aria-checked="dimOthers" title="Fade the other parts when one is selected" @click="dimOthers = !dimOthers">
+                    <Ghost :size="16" /><span class="tpop-text"><strong>Fade others</strong><small>Fade the rest when a part is selected</small></span><span class="tpop-check"><Check v-if="dimOthers" :size="14" /></span>
+                  </button>
+                  <button class="tpop-row" :class="{ on: showLeds }" role="menuitemcheckbox" :aria-checked="showLeds" title="Show LED positions and directions" @click="showLeds = !showLeds">
+                    <Lightbulb :size="16" /><span class="tpop-text"><strong>LEDs</strong><small>Positions and directions</small></span><span class="tpop-check"><Check v-if="showLeds" :size="14" /></span>
+                  </button>
+                  <button class="tpop-row" :class="{ on: ws.meshAll.value }" role="menuitemcheckbox" :aria-checked="ws.meshAll.value" title="Show the mesh the rays are traced against (all shown parts)" @click="ws.meshAll.value = !ws.meshAll.value">
+                    <Grid3x3 :size="16" /><span class="tpop-text"><strong>Mesh</strong><small>What the rays are traced against</small></span><span class="tpop-check"><Check v-if="ws.meshAll.value" :size="14" /></span>
+                  </button>
+                  <div class="tpop-sep" />
+                  <button class="tpop-row" :disabled="!sceneCtl.anyHidden.value" title="Show every part again (Alt+H)" @click="showAll">
+                    <Eye :size="16" /><span class="tpop-text"><strong>Show all parts</strong><small>{{ sceneCtl.anyHidden.value ? "Some parts are hidden" : "Nothing is hidden" }}</small></span>
+                  </button>
+                </template>
+              </ToolbarPopover>
+
+              <ToolbarPopover>
+                <template #trigger="{ open, toggle }">
+                  <button
+                    class="tbtn"
+                    :class="{ on: open }"
+                    :title="`Camera: ${viewer.currentProjection.value === 'orthographic' ? 'orthographic' : 'perspective'}. It applies to everything: the model, the maps on it, the photoreal view and the pictures rendered from the results.`"
+                    aria-label="Camera projection"
+                    aria-haspopup="menu"
+                    :aria-expanded="open"
+                    @click="toggle"
+                  >
+                    <component :is="viewer.currentProjection.value === 'orthographic' ? OrthographicIcon : PerspectiveIcon" :size="16" />
+                    <ChevronDown :size="11" class="tbtn-caret" />
+                  </button>
+                </template>
+                <template #default="{ close }">
+                  <div class="tpop-head">Camera</div>
+                  <button class="tpop-row" :class="{ on: viewer.currentProjection.value !== 'orthographic' }" role="menuitemradio" :aria-checked="viewer.currentProjection.value !== 'orthographic'" @click="viewer.setProjectionType('perspective'); close()">
+                    <PerspectiveIcon :size="18" /><span class="tpop-text"><strong>Perspective</strong><small>Things further away look smaller</small></span><span class="tpop-check"><Check v-if="viewer.currentProjection.value !== 'orthographic'" :size="14" /></span>
+                  </button>
+                  <button class="tpop-row" :class="{ on: viewer.currentProjection.value === 'orthographic' }" role="menuitemradio" :aria-checked="viewer.currentProjection.value === 'orthographic'" @click="viewer.setProjectionType('orthographic'); close()">
+                    <OrthographicIcon :size="18" /><span class="tpop-text"><strong>Orthographic</strong><small>No perspective, sizes stay true</small></span><span class="tpop-check"><Check v-if="viewer.currentProjection.value === 'orthographic'" :size="14" /></span>
+                  </button>
+                </template>
+              </ToolbarPopover>
+
+              <button class="tbtn icon" title="Fit the whole model" aria-label="Fit the whole model" @click="viewer.resetView()"><Maximize :size="16" /></button>
+            </div>
           </div>
-          <div class="tgroup">
-            <button class="tbtn icon" :class="{ on: treeOpen }" title="Model tree (T)" aria-label="Model tree" @click="toggleTree"><ListTree :size="16" /></button>
-            <button v-if="sceneCtl.anyHidden.value" class="tbtn" title="Show every part again (Alt+H)" @click="showAll"><Eye :size="15" /><span class="tlabel">Show all</span></button>
-            <button class="tbtn" :class="{ on: dimOthers }" title="Fade the other parts when one is selected" @click="dimOthers = !dimOthers"><Ghost :size="15" /><span class="tlabel">Fade others</span></button>
-            <button class="tbtn" :class="{ on: allTransparent }" title="Make every part transparent, to see what is inside" @click="allTransparent = !allTransparent"><Blend :size="15" /><span class="tlabel">See-through</span></button>
-            <button class="tbtn" :class="{ on: showLeds }" title="Show LED positions and directions" @click="showLeds = !showLeds"><Lightbulb :size="15" /><span class="tlabel">LEDs</span></button>
-            <button class="tbtn" :class="{ on: ws.meshAll.value }" title="Show the mesh the rays are traced against (all shown parts)" @click="ws.meshAll.value = !ws.meshAll.value"><Grid3x3 :size="15" /><span class="tlabel">Mesh</span></button>
-            <button class="tbtn icon" title="Fit the whole model" aria-label="Fit the whole model" @click="viewer.resetView()"><Maximize :size="16" /></button>
-          </div>
-          <div class="tgroup">
-            <button class="tbtn" :class="{ on: livePanelOpen || live.enabled.value }" title="Live physics while you edit, and a photoreal view of the result" @click="livePanelOpen = !livePanelOpen"><Zap :size="15" /><span class="tlabel">Live</span></button>
-          </div>
-          <div class="tgroup">
-            <button v-if="activeRun" class="tbtn" :class="{ on: resultsShown }" title="Show the results of the opened run" @click="resultsShown = !resultsShown"><BarChart3 :size="15" /><span class="tlabel">Results</span></button>
-            <button class="tbtn" :class="{ on: dockShown }" :title="activeRun ? 'What to show in the 3D view: the map, surfaces and rays; click a surface to inspect it' : 'Pick a run to show its map, surfaces and rays on the model'" @click="toggleDock"><ScanSearch :size="15" /><span class="tlabel">Analysis</span></button>
+
+          <!-- right: the simulation -->
+          <div class="vb-right">
+            <div class="tgroup">
+              <button class="tbtn" :class="{ on: livePanelOpen || live.enabled.value }" title="Live physics while you edit, and a photoreal view of the result" @click="toggleLive"><Zap :size="15" /><span class="tlabel">Live</span></button>
+              <button v-if="activeRun" class="tbtn" :class="{ on: resultsShown }" title="Show the results of the opened run" @click="resultsShown = !resultsShown"><BarChart3 :size="15" /><span class="tlabel">Results</span></button>
+              <button class="tbtn" :class="{ on: dockShown }" :title="activeRun ? 'What to show in the 3D view: the map, surfaces and rays; click a surface to inspect it' : 'Pick a run to show its map, surfaces and rays on the model'" @click="toggleDock"><ScanSearch :size="15" /><span class="tlabel">Analysis</span></button>
+            </div>
           </div>
         </div>
 
@@ -179,15 +226,16 @@
           :result-key="liveKey"
           :sim-running="live.phase.value === 'running' || live.phase.value === 'starting'"
           :exposure="view.exposure"
-          :ambient="view.ambient"
+          :room-lux="view.roomLux"
+          :exposure-mode="view.exposureMode"
           :white-balance="view.whiteBalance"
           :mode="view.mode"
           :resolution="view.resolution"
           :state="live.shownState.value"
           :hidden-exits="view.hiddenExits"
           @status="(s) => (view.status = s)"
+          @lum="(l) => (view.lum = l)"
         />
-        <LivePanel v-if="livePanelOpen && ws.ready.value && !resultsCover" :live="live" :view="view" @close="livePanelOpen = false" />
 
         <div v-if="ws.pick.value && pickInfo" class="pick-pill" role="status">
           <span class="pp-dot" :style="{ background: pickInfo.color }" />
@@ -209,35 +257,33 @@
           @node-contextmenu="onTreeContextMenu"
         />
 
-        <div v-if="!resultsCover" class="viewer-right-panels" :style="dockShown ? { right: '354px' } : undefined">
+        <!-- bottom left: the cut controls, with the colour scale of the map above them -->
+        <div class="left-dock">
+          <MapScaleLegend v-if="mapScales.length" :scales="mapScales" />
           <SectionPanel
-            :visible="sectionPanelOpen"
+            :visible="sectionsOn"
             :active-planes="activePlanes"
-            :flip-x="flip.x"
-            :flip-y="flip.y"
-            :flip-z="flip.z"
-            :flip-face="false"
-            :has-selected-face="false"
+            :flip="flip"
             :plane-distances="viewer.planeDistances"
             :show-caps="viewer.showSectionCaps.value"
+            :plane-visible="planeVisible"
+            @close="turnOffSections"
+            @clear="viewer.resetCuttingPlanes()"
+            @toggle="(a) => togglePlane(a)"
+            @flip="setFlip"
+            @set-distance="(a, d) => viewer.setPlaneDistance(a, d)"
             @update:show-caps="setCaps"
-            @update:visible="(v: boolean) => (sectionPanelOpen = v)"
-            @update:flip-x="(v: boolean) => (flip.x = v)"
-            @update:flip-y="(v: boolean) => (flip.y = v)"
-            @update:flip-z="(v: boolean) => (flip.z = v)"
-            @reset="viewer.resetCuttingPlanes()"
-            @plane-x="(fc: boolean) => togglePlane('x', fc)"
-            @plane-y="(fc: boolean) => togglePlane('y', fc)"
-            @plane-z="(fc: boolean) => togglePlane('z', fc)"
-            @set-distance="(a: 'x' | 'y' | 'z', d: number) => viewer.setPlaneDistance(a, d)"
+            @update:plane-visible="setPlaneVisible"
           >
             <SectionLight v-if="activeRun" :sl="sectionLight" :av="av" />
           </SectionPanel>
         </div>
 
-        <MapScaleLegend v-if="mapScales.length" :scales="mapScales" />
-
-        <AnalysisDock v-if="dockShown" :ctx="dockCtx" :has-run="!!activeRun" :runs="pickableRuns" @close="dockOpen = false" @open-results="resultsShown = true" @pick-run="pickRunForDock" @new-run="newRunFromDock" />
+        <!-- right: Live and Analysis stack under the simulation buttons instead of overlapping -->
+        <div v-if="!resultsCover" class="right-dock">
+          <LivePanel v-if="livePanelOpen && ws.ready.value" :live="live" :view="view" @close="livePanelOpen = false" />
+          <AnalysisDock v-if="dockShown" :ctx="dockCtx" :has-run="!!activeRun" :run-id="activeRun" :runs="pickableRuns" @close="dockOpen = false" @open-results="resultsShown = true" @pick-run="pickRunForDock" />
+        </div>
 
         <HotkeyOverlay :hotkeys="viewer.hotkeys.activeHotkeys.value" :visible="showHotkeys" />
 
@@ -255,7 +301,7 @@
             <button class="icon-btn" title="Close results" @click="closeResults"><X :size="16" /></button>
           </div>
           <div class="results-scroll">
-            <ResultsView :run-id="activeRun" @loaded="onResultsLoaded" />
+            <ResultsView :run-id="activeRun" :projection="viewer.currentProjection.value" @loaded="onResultsLoaded" />
           </div>
         </section>
         <button v-if="activeRun && !resultsShown && !dockShown" class="back-to-results btn primary" @click="resultsShown = true"><BarChart3 :size="15" /> Back to results</button>
@@ -305,7 +351,6 @@ import {
   ScanSearch,
   Scissors,
   Shapes,
-  Slice,
   SlidersHorizontal,
   Sun,
   Table2,
@@ -342,12 +387,15 @@ import RunTab from "../components/RunTab.vue";
 import ResultsTab from "../components/ResultsTab.vue";
 import LivePanel, { type PhotorealView } from "../components/LivePanel.vue";
 import LiveViewOverlay from "../components/LiveViewOverlay.vue";
+import { DEFAULT_ROOM_LUX } from "../utils/roomLux";
 import ResultsView from "../components/ResultsView.vue";
 import LibraryDialog from "../components/LibraryDialog.vue";
 import OverviewDialog from "../components/OverviewDialog.vue";
 import ContextMenu, { type MenuItem } from "../components/ContextMenu.vue";
 import ModelTreeOverlay from "../components/viewer/ModelTreeOverlay.vue";
 import SectionPanel from "../components/viewer/SectionPanel.vue";
+import ToolbarPopover from "../components/viewer/ToolbarPopover.vue";
+import { OrthographicIcon, PerspectiveIcon } from "../components/icons/customIcons";
 import HotkeyOverlay from "../components/viewer/HotkeyOverlay.vue";
 
 const props = defineProps<{ id: string }>();
@@ -676,15 +724,17 @@ const dockOpen = ref(false);
 // with no run open there is no results page to cover the view: the panel then offers the runs to pick from
 const dockShown = computed(() => dockOpen.value && (!activeRun.value || !resultsShown.value));
 /** The finished runs the panel offers when none is open (like the Results tab: no sweep variants), newest first. */
-const pickableRuns = computed(() => ws.runs.value.filter((r) => !r.sweep && r.status === "ready").sort((a, b) => b.created - a.created));
+const pickableRuns = computed(() =>
+  // (the run that is open stays in the list even when it would not be offered, so the choice always shows it)
+  ws.runs.value.filter((r) => r.id === activeRun.value || (!r.sweep && r.status === "ready")).sort((a, b) => b.created - a.created),
+);
+/** Choosing a run in the panel is opening it in the results and pressing View in 3D: the exit map of the run on the model, nothing picked. */
 function pickRunForDock(rid: string) {
+  if (rid === activeRun.value) return;
+  tab.value = "results";
   activeRun.value = rid;
-  resultsShown.value = false; // stay on the 3D view: the map appears on the model as soon as the run has loaded
+  resultsShown.value = false;
   dockOpen.value = true;
-}
-function newRunFromDock() {
-  tab.value = "runs";
-  dockOpen.value = false;
 }
 const dockCtx = computed<AnalysisCtx | null>(() => {
   const c = current.value;
@@ -762,7 +812,16 @@ watch(
 // ── live physics and the photoreal view ──────────────────────────────────────────────────
 const live = useLivePreview(ws);
 const livePanelOpen = ref(false);
-const view = reactive<PhotorealView>({ on: false, exposure: 0, ambient: 0.15, whiteBalance: false, mode: "map", resolution: 0, hiddenExits: [], status: null });
+/** The Live button: opening the panel also switches the simulation on; clicking again only hides the panel (it keeps running). */
+function toggleLive() {
+  if (livePanelOpen.value) {
+    livePanelOpen.value = false;
+    return;
+  }
+  livePanelOpen.value = true;
+  if (!live.enabled.value) void live.toggle();
+}
+const view = reactive<PhotorealView>({ on: false, exposure: 0, roomLux: DEFAULT_ROOM_LUX, exposureMode: "fixed", whiteBalance: false, mode: "map", resolution: 0, hiddenExits: [], status: null, lum: null });
 const liveKey = computed(() => `${live.run.value?.live?.rays ?? 0}:${live.run.value?.status ?? ""}`);
 watch(
   () => live.enabled.value,
@@ -815,7 +874,8 @@ watch(
 
 // ── section planes ────────────────────────────────────────────────────────────────
 const PLANE_KEY = "refract.planeHandle";
-const sectionPanelOpen = ref(false);
+/** Sections are on while the panel at the bottom left is open; turning them off also removes the cuts. */
+const sectionsOn = ref(false);
 const flip = reactive({ x: false, y: false, z: false });
 /** The plane handle is what you drag to move the cut; it can be hidden to see the model undisturbed. */
 const planeVisible = ref(localStorage.getItem(PLANE_KEY) !== "0");
@@ -842,6 +902,35 @@ function togglePlane(axis: "x" | "y" | "z", fromCheckbox = false) {
   const fn = { x: viewer.toggleCuttingPlaneX, y: viewer.toggleCuttingPlaneY, z: viewer.toggleCuttingPlaneZ }[axis];
   if (fn(flip[axis], isActive)) viewer.hideCuttingPlanes(!planeVisible.value);
 }
+/** Which side of a plane that is on is removed. */
+function setFlip(axis: "x" | "y" | "z", v: boolean) {
+  flip[axis] = v;
+  if (viewer.getActivePlanes().includes(axis)) viewer.updateSectionFlip(axis, v);
+}
+/** The Sections button: on opens the panel and starts with the X plane so something visibly happens. */
+function toggleSections() {
+  if (sectionsOn.value) {
+    turnOffSections();
+    return;
+  }
+  sectionsOn.value = true;
+  if (activePlanes.value.size === 0) togglePlane("x");
+}
+function turnOffSections() {
+  viewer.resetCuttingPlanes();
+  sectionsOn.value = false;
+}
+// a cut made any other way (a hotkey, the palette) brings the panel up
+watch(
+  () => activePlanes.value.size,
+  (n) => {
+    if (n > 0) sectionsOn.value = true;
+  },
+);
+/** How many Display options differ from the default, shown as a badge on the button. */
+const displayChanged = computed(
+  () => Number(dimOthers.value) + Number(allTransparent.value) + Number(ws.meshAll.value) + Number(!showLeds.value) + Number(sceneCtl.anyHidden.value),
+);
 /** Light at the cut: the flux through the plane and the ray fan (needs an opened run). */
 const sectionLight = useSectionLight(
   activeRun,

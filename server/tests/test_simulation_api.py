@@ -252,7 +252,7 @@ def test_ray_file_source(client, project):
 def test_mitsuba_render(client, project):
     pytest.importorskip("mitsuba")
     runid = _run(client, project["a"], 20_000)
-    res = client.post(f"/api/runs/{runid}/render", json={"width": 200, "spp": 4, "state": "only_led1", "ambient": 0.0})
+    res = client.post(f"/api/runs/{runid}/render", json={"width": 200, "spp": 4, "state": "only_led1", "room_lux": 0.0})
     assert res.status_code == 200, res.text
     t0 = time.time()
     while time.time() - t0 < 180:
@@ -276,6 +276,31 @@ def test_mitsuba_render(client, project):
     assert client.get(f"/api/runs/{runid}/render").json()["render"]["info"]["camera"]
     bad = client.post(f"/api/runs/{runid}/render", json={"width": 50})
     assert bad.status_code == 400
+
+
+def test_mitsuba_render_follows_the_orthographic_projection(client, project):
+    pytest.importorskip("mitsuba")
+    runid = _run(client, project["a"], 20_000)
+    assert client.post(f"/api/runs/{runid}/render", json={"width": 200, "projection": "fisheye"}).status_code == 400
+    res = client.post(f"/api/runs/{runid}/render", json={"width": 200, "spp": 4, "state": "only_led1", "room_lux": 0.0, "projection": "orthographic"})
+    assert res.status_code == 200, res.text
+    t0 = time.time()
+    while time.time() - t0 < 180:
+        r = client.get(f"/api/runs/{runid}/render").json()["render"]
+        if r["status"] in ("ready", "failed"):
+            break
+        time.sleep(0.5)
+    assert r["status"] == "ready", r.get("error")
+    assert r["info"]["camera"]["projection"] == "orthographic"
+    png = client.get(f"/api/runs/{runid}/render.png")
+    assert png.status_code == 200 and png.content[:4] == b"\x89PNG"
+    import io as _io
+
+    import numpy as np
+    from PIL import Image
+
+    img = np.asarray(Image.open(_io.BytesIO(png.content)).convert("L")).astype(float)
+    assert img.max() > 100  # the lit exit surface is in the picture
 
 
 def test_unwrapped_exit_surface_matches_flat_projection(client, project):
@@ -627,5 +652,65 @@ def test_receiver_detector_end_to_end(client, project):
         assert both["matched"] >= max(
             client.post(f"/api/runs/{runid}/analysis/rays", json={"filter": {"detector": k}, "count": 5}).json()["matched"] for k in (0, 1)
         )
+    finally:
+        client.put(_setup_url(client, project['pid']), json=base)
+
+
+def test_live_view_with_a_receiver_does_not_count_its_light_twice(client, project):
+    """An exit surface and a receiver are lit together: the receiver's finish goes into a second picture (lit by the room only), the
+    receivers are black in the glow picture, and the numbers behind the picture are reported per surface."""
+    pytest.importorskip("mitsuba")
+    import json
+
+    from refract import store
+    from refract.render import mitsuba_export as mx
+
+    base = client.get(_setup_url(client, project['pid'])).json()
+    rcv = {"id": "rc", "name": "Tray wall", "faces": [{"part": "Reflector Tray:1", "face": 7}], "cone_deg": 20, "resolution": 40, "type": "receiver", "view_el": 90, "view_az": 0}
+    try:
+        assert client.put(_setup_url(client, project['pid']), json={**base, "detectors": [*base["detectors"], rcv]}).status_code == 200
+        rid = project["a"]
+        runid = client.post(f"/api/revisions/{rid}/live", json={"rays": 20_000}).json()["id"]
+        assert _wait(client, f"/api/runs/{runid}")["status"] == "ready"
+        rdir = store.run_dir(rid, runid)
+        setup, library = store.read_json(rdir / "setup.json"), store.read_json(rdir / "library.json")
+        both, _ = (None, None)
+        for lux, hidden in ((300.0, []), (300.0, [0]), (0.0, [])):
+            d, info = mx.build_mitsuba_scene(rid, setup, library, None, {"mode": "map", "room_lux": lux, "hidden_exits": hidden}, rdir / "t_meshes", runid)
+            room = info["roomScene"]
+            if hidden or lux == 0:
+                assert room is None  # one lit surface (nothing else lights the receiver), or a dark room (no light on its finish)
+                continue
+            assert room is not None and "exit_1" in room and "emitter" not in room["exit_1"] and "environment" in room and "environment" not in d
+            assert "exit_0" not in room  # the exit surface is not drawn in the room picture
+            assert d["exit_1"]["bsdf"]["reflectance"]["value"] == [0.0, 0.0, 0.0] and "emitter" in d["exit_1"]
+            both = info
+        assert both is not None and len(both["exitInfo"]["surfaces"]) == 2
+        body = {"camera": {"position": [60, -80, 60], "target": [25, 0, 0], "up": [0, 0, 1], "fov": 40}, "width": 320, "height": 200, "spp": 8, "room_lux": 300}
+        t0, res = time.time(), None
+        while time.time() - t0 < 180:
+            res = client.post(f"/api/runs/{runid}/live-frame", json=body)
+            if res.headers["content-type"].startswith("image/"):
+                break
+            time.sleep(1)
+        assert res is not None and res.headers["content-type"] == "image/jpeg", res.text
+        lum = json.loads(res.headers["x-lum"])
+        assert lum["lux"] == pytest.approx(300.0) and lum["card"] == pytest.approx(300.0 / 3.14159265, rel=1e-6)
+        assert [s["index"] for s in lum["surfaces"]] == [0, 1] and all(s["peak"] > 0 for s in lum["surfaces"])
+        # the exposure is fixed: a dim room looks dim, a bright one looks bright (it does not follow the room light)
+        import io as _io
+
+        import numpy as np
+        from PIL import Image
+
+        def mean_level(**kw):
+            r = client.post(f"/api/runs/{runid}/live-frame", json={**body, **kw})
+            assert r.headers["content-type"] == "image/jpeg", r.text
+            return float(np.asarray(Image.open(_io.BytesIO(r.content)).convert("L")).astype(float).mean())
+
+        dim, bright = mean_level(room_lux=20), mean_level(room_lux=3000)
+        assert bright > dim + 5, (dim, bright)
+        client.post("/api/live-view/close")
+        client.delete(f"/api/runs/{runid}")
     finally:
         client.put(_setup_url(client, project['pid']), json=base)

@@ -1,30 +1,25 @@
 <template>
-  <aside class="analysis-dock" @click.stop @pointermove.stop>
+  <aside class="analysis-dock" :class="{ collapsed }" @click.stop @pointermove.stop @pointerdown.stop @wheel.stop>
     <div class="live-head">
-      <strong>What to show</strong>
+      <ScanSearch :size="15" />
+      <strong>Analysis</strong>
       <span class="spacer" />
+      <button class="icon-btn" :title="collapsed ? 'Expand' : 'Collapse'" :aria-expanded="!collapsed" @click="collapsed = !collapsed"><component :is="collapsed ? ChevronDown : ChevronUp" :size="15" /></button>
       <button class="icon-btn" title="Hide this panel" @click="emit('close')"><X :size="15" /></button>
     </div>
 
-    <!-- no run is open yet: say so and offer the finished runs -->
-    <section v-if="!hasRun" class="layer empty-state">
-      <div class="notice info"><Info :size="15" /><span>No results are open. The analysis shows a run's map, surfaces and rays on the model. Pick a run to start.</span></div>
-      <ul v-if="runs.length" class="run-pick">
-        <li v-for="r in runs" :key="r.id">
-          <button class="run-pick-item" @click="emit('pick-run', r.id)">
-            <strong>{{ r.name }}</strong>
-            <span class="muted small">
-              {{ fmtAgo(r.created) }} · {{ (r.raysTraced ?? r.settings.rays).toLocaleString() }} rays
-              <span v-if="r.hasAnalysis === false" class="chip" title="Made without the light path analysis: only the exit map can be shown">map only</span>
-            </span>
-          </button>
-        </li>
-      </ul>
-      <template v-else>
-        <p class="muted small">There are no finished runs yet.</p>
-        <button class="btn small" @click="emit('new-run')"><Play :size="14" /> Go to Runs</button>
-      </template>
-    </section>
+    <div v-show="!collapsed" class="dock-body">
+
+    <!-- which run the 3D view shows: choosing one opens it, as opening it in the results and pressing View in 3D would -->
+    <label v-if="runs.length" class="mini run-select" title="The run whose map, surfaces and rays are shown on the model">
+      <span>Run</span>
+      <select :value="runId ?? ''" @change="onPickRun">
+        <option v-if="!runId" value="" disabled>Pick a run…</option>
+        <option v-for="r in runs" :key="r.id" :value="r.id">{{ runLabel(r) }}</option>
+      </select>
+    </label>
+    <div v-if="!runs.length" class="notice info"><Info :size="15" /><span>There are no finished runs yet. Run a simulation, then pick it here to see it on the model.</span></div>
+    <div v-else-if="!hasRun" class="notice info"><Info :size="15" /><span>No results are open. Pick a run above to show its map, surfaces and rays on the model.</span></div>
 
     <template v-if="hasRun">
     <!-- what was picked in the results -->
@@ -293,12 +288,13 @@
       </div>
     </section>
     </template>
+    </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { AlertTriangle, BarChart3, Info, Layers, Map, MousePointerClick, Play, RotateCcw, Waypoints, X } from "lucide-vue-next";
+import { AlertTriangle, BarChart3, ChevronDown, ChevronUp, Info, Layers, Map, MousePointerClick, RotateCcw, ScanSearch, Waypoints, X } from "lucide-vue-next";
 import type { FaceReport, FlowItem, RaysFilter, RunMeta } from "../api";
 import { EVENTS, LED_PALETTE, injectAnalysisView, type AnalysisCtx } from "../composables/useAnalysisView";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -308,8 +304,16 @@ import { fmtAgo } from "../utils/format";
 import BarList from "./BarList.vue";
 import FootprintMap from "./analysis/FootprintMap.vue";
 
-defineProps<{ ctx: AnalysisCtx | null; hasRun: boolean; runs: RunMeta[] }>();
-const emit = defineEmits<{ close: []; "open-results": []; "pick-run": [runId: string]; "new-run": [] }>();
+defineProps<{ ctx: AnalysisCtx | null; hasRun: boolean; runId: string | null; runs: RunMeta[] }>();
+const collapsed = ref(false);
+const emit = defineEmits<{ close: []; "open-results": []; "pick-run": [runId: string] }>();
+function runLabel(r: RunMeta): string {
+  return `${r.name} · ${fmtAgo(r.created)}${r.hasAnalysis === false ? " (map only)" : ""}`;
+}
+function onPickRun(e: Event) {
+  const id = (e.target as HTMLSelectElement).value;
+  if (id) emit("pick-run", id);
+}
 const av = injectAnalysisView();
 const ws = useWorkspace();
 
@@ -391,12 +395,6 @@ const densityText = computed(() => {
 .ramp { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--neutral-10); }
 .grad { flex: 1; height: 8px; border-radius: 4px; border: 1px solid var(--neutral-4); display: inline-block; }
 .hit-legend { display: flex; flex-direction: column; gap: 4px; }
-.run-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
-.run-pick-item {
-  width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; text-align: left;
-  border: 1px solid var(--neutral-4); border-radius: var(--radius-md); background: var(--neutral-1); color: inherit; font: inherit; font-size: 0.82rem; cursor: pointer;
-}
-.run-pick-item:hover { background: var(--accent-3); border-color: var(--accent-7); }
 .switch.disabled { opacity: 0.5; }
 .spot-chip { display: inline-flex; align-items: center; gap: 5px; }
 .spot-chip i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }

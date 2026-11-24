@@ -8,7 +8,8 @@
 // camera is still, so the picture sharpens by itself. While the camera moves the picture is hidden and the plain CAD
 // view underneath is used to position it; the picture comes back when the camera has been still for a moment.
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { api, ApiError, type LiveCamera } from "../api";
+import { api, ApiError, type LiveCamera, type LiveLuminance } from "../api";
+import type { ExposureMode } from "../utils/roomLux";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Viewer = any;
@@ -20,7 +21,10 @@ const props = defineProps<{
   resultKey: string;
   simRunning: boolean;
   exposure: number;
-  ambient: number;
+  /** Illuminance of the room light, lux (0: a dark room). */
+  roomLux: number;
+  /** How the picture is exposed: a fixed camera, for the room light or from the lit surfaces. */
+  exposureMode: ExposureMode;
   whiteBalance: boolean;
   /** "map": the exit surface from the simulation. "transport": the LEDs light the whole model (noisy, slow to clean up). */
   mode: "map" | "transport";
@@ -32,6 +36,7 @@ const props = defineProps<{
   hiddenExits: number[];
 }>();
 const emit = defineEmits<{
+  lum: [l: LiveLuminance | null];
   status: [s: { state: "starting" | "waiting" | "live" | "error"; message: string; spp: number; ms: number; variant: string; fps: number }];
 }>();
 
@@ -68,9 +73,22 @@ function cameraNow(): { cam: LiveCamera; aspect: number; key: string } | null {
   // an orthographic view shows `orthoHalfH / zoom` above the target
   const ortho = s.projection === "orthographic";
   const half = ortho ? (s.orthoHalfH ?? 1) / (s.orthoZoom || 1) : null;
+  // The orbit pivot (`s.target`) need not be on the view axis: the orbit controls are quaternion based and move the pivot to
+  // wherever you picked. The picture is aimed with look-at, so it needs a target on the axis the camera really looks along.
+  let target: [number, number, number] = [s.target.x, s.target.y, s.target.z];
+  const q = s.quaternion;
+  if (q) {
+    const dist = Math.hypot(s.target.x - s.position.x, s.target.y - s.position.y, s.target.z - s.position.z) || 1;
+    // the camera looks down its own -z axis
+    const fx = -2 * (q.x * q.z + q.w * q.y);
+    const fy = -2 * (q.y * q.z - q.w * q.x);
+    const fz = -(1 - 2 * (q.x * q.x + q.y * q.y));
+    const fl = Math.hypot(fx, fy, fz) || 1;
+    target = [s.position.x + (fx / fl) * dist, s.position.y + (fy / fl) * dist, s.position.z + (fz / fl) * dist];
+  }
   const cam: LiveCamera = {
     position: [s.position.x, s.position.y, s.position.z],
-    target: [s.target.x, s.target.y, s.target.z],
+    target,
     up: [s.up.x, s.up.y, s.up.z],
     fov: s.fov,
     orthoHalfH: half,
@@ -117,7 +135,7 @@ async function loop(my: number) {
       continue;
     }
     const resultKey = props.resultKey;
-    const vk = `${props.exposure}|${props.ambient}|${props.whiteBalance}|${props.mode}|${props.resolution}|${props.state}|${props.hiddenExits.join(",")}`;
+    const vk = `${props.exposure}|${props.roomLux}|${props.exposureMode}|${props.whiteBalance}|${props.mode}|${props.resolution}|${props.state}|${props.hiddenExits.join(",")}`;
     if (vk !== lastView) {
       lastView = vk;
       lastSpp = 0;
@@ -156,7 +174,8 @@ async function loop(my: number) {
           spp: Math.max(1, Math.round((sinceMove === 0 ? 4 : props.mode === "transport" ? 16 : lastSpp < 32 ? 8 : 16) / share)),
           quality: 88,
           exposure: props.exposure,
-          ambient: props.ambient,
+          room_lux: props.roomLux,
+          exposure_mode: props.exposureMode,
           white_balance: props.whiteBalance,
           mode: props.mode,
           state: props.state || null,
@@ -193,6 +212,7 @@ async function loop(my: number) {
       lastSpp = reply.spp;
       sinceMove++;
       await draw(reply.blob);
+      emit("lum", reply.lum);
       frames++;
       const t = performance.now();
       if (t - fpsT > 1000) {

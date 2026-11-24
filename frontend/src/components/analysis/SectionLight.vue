@@ -83,14 +83,14 @@ const minT = computed(() => Math.max(0.05, Math.round(props.sl.maxThickness.valu
 </script>
 
 <style scoped>
-.sl { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--neutral-5); display: flex; flex-direction: column; gap: 6px; max-width: 250px; }
-.sl-title { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.04em; color: var(--neutral-8); padding: 0 12px; }
+.sl { padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sl-title { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--neutral-10); padding: 0 12px; }
 .sl > :not(.sl-title) { margin: 0 12px; }
-.sl-hint, .sl-note { font-size: 0.72rem; color: var(--neutral-8); line-height: 1.35; }
+.sl-hint, .sl-note { font-size: 0.72rem; color: var(--neutral-10); line-height: 1.35; }
 .sl-note.err { color: #dc2626; }
 .sl-note.warn { color: #b45309; }
 .sl-row { display: flex; align-items: center; gap: 6px; }
-.sl-lab { font-size: 0.72rem; color: var(--neutral-8); min-width: 64px; }
+.sl-lab { font-size: 0.72rem; color: var(--neutral-10); min-width: 64px; }
 .sl-sel { flex: 1; min-width: 0; font-size: 0.75rem; padding: 2px 4px; border: 1px solid var(--neutral-5); border-radius: 4px; background: var(--neutral-2); color: var(--neutral-12); }
 .sl-chip { padding: 1px 8px; border: 1px solid var(--neutral-5); border-radius: 10px; background: var(--neutral-2); color: var(--neutral-10); font-size: 0.72rem; cursor: pointer; }
 .sl-chip.on { background: var(--accent-8); border-color: var(--accent-8); color: #fff; }
@@ -98,7 +98,7 @@ const minT = computed(() => Math.max(0.05, Math.round(props.sl.maxThickness.valu
 .sl-mode:hover { border-color: var(--neutral-7); }
 .sl-mode.on { border-color: var(--accent-8); background: var(--accent-3, var(--neutral-3)); color: var(--neutral-12); box-shadow: inset 0 0 0 1px var(--accent-8); }
 .sl-mode-name { font-size: 0.75rem; font-weight: 600; }
-.sl-mode-sub { font-size: 0.65rem; color: var(--neutral-8); line-height: 1.2; }
+.sl-mode-sub { font-size: 0.65rem; color: var(--neutral-10); line-height: 1.2; }
 .sl-bar { display: flex; align-items: center; gap: 6px; }
 .sl-bar-grad { flex: 1; height: 10px; border-radius: 3px; border: 1px solid var(--neutral-5); }
 .sl-bar-lab { font-size: 0.7rem; color: var(--neutral-10); font-variant-numeric: tabular-nums; }

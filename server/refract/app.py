@@ -1021,7 +1021,8 @@ class LiveFrameBody(BaseModel):
     quality: int = 85
     state: str | None = None
     exposure: float = 0.0
-    ambient: float = 0.04
+    room_lux: float = 500.0  # illuminance of the room light on a surface facing the camera (lux); 0 = a dark room
+    exposure_mode: str = "fixed"  # "fixed" camera, "room" (a white card in the room light is mid-grey) or "surfaces" (from the lit exit surfaces)
     smooth: float = 2.0
     white_balance: bool = True
     mode: str = "map"  # "map": the exit surface from the simulation; "transport": the full light transport (LEDs as emitters)
@@ -1050,11 +1051,11 @@ def live_frame(runid: str, body: LiveFrameBody) -> Response:
         "spp": body.spp,
         "reset": body.reset,
         "quality": max(30, min(body.quality, 95)),
-        "view": {"state": body.state, "exposure": body.exposure, "ambient": max(0.0, min(body.ambient, 1.0)), "smooth": max(0.0, min(body.smooth, 8.0)), "white_balance": body.white_balance, "mode": "transport" if body.mode == "transport" else "map", "hidden_exits": sorted({i for i in body.hidden_exits if i >= 0})},
+        "view": {"state": body.state, "exposure": body.exposure, "room_lux": max(0.0, min(body.room_lux, 1.0e5)), "exposure_mode": body.exposure_mode if body.exposure_mode in ("fixed", "room", "surfaces") else "fixed", "smooth": max(0.0, min(body.smooth, 8.0)), "white_balance": body.white_balance, "mode": "transport" if body.mode == "transport" else "map", "hidden_exits": sorted({i for i in body.hidden_exits if i >= 0})},
     }
     out = live_view.request_frame(run["revisionId"], runid, req)
     if out["status"] == "ok":
-        headers = {"X-Spp": str(out["spp"]), "X-Rays": str(out.get("rays") or 0), "X-Ms": str(out.get("ms", 0)), "X-Variant": str(out.get("variant", "")), "Cache-Control": "no-store"}
+        headers = {"X-Spp": str(out["spp"]), "X-Rays": str(out.get("rays") or 0), "X-Ms": str(out.get("ms", 0)), "X-Variant": str(out.get("variant", "")), "X-Lum": json.dumps(out.get("lum") or {}, separators=(",", ":")), "Cache-Control": "no-store"}
         return Response(out["jpeg"], media_type="image/jpeg", headers=headers)
     return JSONResponse(out, status_code=202)
 
@@ -1116,9 +1117,11 @@ class RenderBody(BaseModel):
     detector: int = 0  # the exit surface / receiver the camera looks at (index in the setup)
     zoom: float = 1.0
     fov: float = 35.0
+    projection: str = "perspective"  # "orthographic" frames the same view without perspective, like the 3D view's projection
     exposure: float = 0.0
     smooth: float = 1.0
-    ambient: float = 0.04  # room light on the housing, as a fraction of the brightest exit-surface radiance (map mode)
+    room_lux: float = 500.0  # illuminance of the room light on a surface facing the camera (lux); 0 = a dark room
+    exposure_mode: str = "fixed"  # "fixed" camera, "room" (a white card in the room light is mid-grey) or "surfaces" (from the lit exit surfaces)
     white_balance: bool = True
     hidden_exits: list[int] = []  # exit surfaces (detector indices) left dark in the picture (map mode); empty = all are drawn
 
@@ -1154,6 +1157,8 @@ def create_render(runid: str, body: RenderBody) -> dict:
         raise HTTPException(501, why)
     if body.mode not in ("map", "transport"):
         raise HTTPException(400, "mode must be 'map' or 'transport'")
+    if body.projection not in ("perspective", "orthographic"):
+        raise HTTPException(400, "projection must be 'perspective' or 'orthographic'")
     if not (160 <= body.width <= 4096) or not (1 <= body.spp <= 32768):
         raise HTTPException(400, "width must be 160 to 4096 pixels and samples 1 to 32768")
     key = ("render", run["revisionId"], runid)

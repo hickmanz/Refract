@@ -299,6 +299,49 @@ export const ToggleSectionIcon = defineComponent({
   },
 });
 
+/** Camera icons for the projection picker (outline style, sized like the lucide icons). */
+const projectionSvg = (size: number, children: Parameters<typeof h>[2]) =>
+  h(
+    "svg",
+    {
+      xmlns: "http://www.w3.org/2000/svg",
+      viewBox: "0 0 24 24",
+      width: size,
+      height: size,
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": 2,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+    },
+    children,
+  );
+
+/** Perspective: the far square is smaller and the edges converge. */
+export const PerspectiveIcon = defineComponent({
+  name: "PerspectiveIcon",
+  props: { size: { type: Number, default: 16 } },
+  render() {
+    return projectionSvg(this.size, [
+      h("rect", { x: 3, y: 3, width: 18, height: 18, rx: 1 }),
+      h("rect", { x: 9, y: 9, width: 6, height: 6 }),
+      h("path", { d: "M3 3l6 6M21 3l-6 6M21 21l-6-6M3 21l6-6" }),
+    ]);
+  },
+});
+
+/** Orthographic: a cube whose parallel edges stay parallel. */
+export const OrthographicIcon = defineComponent({
+  name: "OrthographicIcon",
+  props: { size: { type: Number, default: 16 } },
+  render() {
+    return projectionSvg(this.size, [
+      h("path", { d: "M3 9h12v12H3z" }),
+      h("path", { d: "M9 3h12v12h-6M3 9l6-6M15 9l6-6M15 21l6-6" }),
+    ]);
+  },
+});
+
 export const XrayIcon = defineComponent({
   name: "XrayIcon",
   render() {
