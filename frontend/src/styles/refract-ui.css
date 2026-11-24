@@ -208,7 +208,7 @@ textarea:focus,
 .side-tabs button {
   border-bottom: none;
   border-radius: var(--radius-md);
-  padding: 6px 6px;
+  padding: 6px 4px;
   color: var(--neutral-10);
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
@@ -223,10 +223,6 @@ textarea:focus,
 }
 .side-tabs button.on > svg {
   color: var(--accent-10);
-}
-.tab-count {
-  background: var(--neutral-5);
-  color: var(--neutral-12);
 }
 .ilist-tabs {
   border-bottom-color: var(--hairline);

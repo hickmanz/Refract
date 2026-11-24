@@ -83,7 +83,7 @@
             <button v-for="t in tabs" :key="t.id" :class="{ on: tab === t.id }" @click="tab = t.id">
               <component :is="t.icon" :size="15" />
               <span>{{ t.label }}</span>
-              <span v-if="t.count !== undefined" class="tab-count">{{ t.count }}</span>
+              <span v-if="t.warn" class="tab-warn" :title="t.warn" />
             </button>
           </nav>
           <div v-if="ws.suggestNotes.value.length" class="notice info">
@@ -640,14 +640,15 @@ async function reimport() {
 // ── tabs ────────────────────────────────────────────────────────────────────
 type TabId = "parts" | "leds" | "detector" | "groups" | "states" | "runs" | "results";
 const tab = ref<TabId>("parts");
-const tabs = computed<{ id: TabId; label: string; icon: Component; count?: number }[]>(() => [
+// `warn` puts a small dot on the tab (its text is the tooltip): something the simulation needs is still missing there
+const tabs = computed<{ id: TabId; label: string; icon: Component; warn?: string }[]>(() => [
   { id: "parts", label: "Parts", icon: Boxes },
-  { id: "leds", label: "LEDs", icon: Lightbulb, count: ws.setup.value?.leds.length },
-  { id: "detector", label: "Exit", icon: Crosshair, count: ws.setup.value?.detectors.length },
-  { id: "groups", label: "Groups", icon: Shapes, count: ws.setup.value?.analysisGroups?.length || undefined },
-  { id: "states", label: "States", icon: SlidersHorizontal, count: ws.setup.value?.states.length },
+  { id: "leds", label: "LEDs", icon: Lightbulb, warn: ws.setup.value?.leds.length ? undefined : "No LEDs yet" },
+  { id: "detector", label: "Exit", icon: Crosshair, warn: ws.setup.value?.detectors.length ? undefined : "No exit surface yet" },
+  { id: "groups", label: "Groups", icon: Shapes },
+  { id: "states", label: "States", icon: SlidersHorizontal, warn: ws.setup.value?.states.length ? undefined : "No states yet" },
   { id: "runs", label: "Run", icon: Play },
-  { id: "results", label: "Results", icon: BarChart3, count: ws.runs.value.length || undefined },
+  { id: "results", label: "Results", icon: BarChart3 },
 ]);
 
 const libraryOpen = ref(false);

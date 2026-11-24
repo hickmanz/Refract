@@ -135,8 +135,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 9px 6px;
+  gap: 3px;
+  padding: 9px 4px;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -151,22 +151,21 @@
   color: var(--neutral-12);
   border-bottom-color: var(--accent-9);
 }
-.side-tabs button > span:not(.tab-count) {
+.side-tabs button > span:not(.tab-warn) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .side-tabs button > svg { flex: none; }
-.tab-count {
+.tab-warn {
   flex: none;
-  min-width: 15px;
-  padding: 0 4px;
-  border-radius: var(--radius-full);
-  background: var(--neutral-3);
-  font-size: 0.68rem;
-  line-height: 15px;
-  text-align: center;
+  align-self: flex-start; /* a small dot raised after the title: something this tab still needs */
+  width: 6px;
+  height: 6px;
+  margin: -2px 0 0 -1px;
+  border-radius: 50%;
+  background: var(--amber-9, #f5a524);
 }
 @container (max-width: 520px) {
   .side-tabs button > svg { display: none; }

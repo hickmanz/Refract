@@ -65,12 +65,24 @@
           <button class="btn small" :class="{ on: det.flip_u }" @click="det.flip_u = !det.flip_u"><FlipHorizontal2 :size="14" /> Flip left–right</button>
           <button class="btn small" :class="{ on: det.flip_v }" @click="det.flip_v = !det.flip_v"><FlipVertical2 :size="14" /> Flip top–bottom</button>
         </div>
-        <ul class="face-list">
+        <button
+          v-if="det.faces.length"
+          class="face-toggle"
+          :aria-expanded="isOpen(det)"
+          :title="isOpen(det) ? 'Hide the faces of this surface' : 'Show the faces of this surface'"
+          @click="toggleOpen(det)"
+        >
+          <ChevronRight :size="14" class="chev" :class="{ open: isOpen(det) }" />
+          <span class="small">{{ det.faces.length }} face{{ det.faces.length === 1 ? "" : "s" }}</span>
+          <span v-if="!isOpen(det)" class="muted small summary">{{ summary(det) }}</span>
+        </button>
+        <ul v-if="det.faces.length && isOpen(det)" class="face-list">
           <li v-for="(f, i) in det.faces" :key="i">
             <span class="small">{{ f.part }} · face {{ f.face }}</span>
             <button class="icon-btn" title="Remove this face" @click="det.faces.splice(i, 1)"><X :size="13" /></button>
           </li>
         </ul>
+        <p v-else-if="!det.faces.length" class="muted small">No faces yet.</p>
         <div class="tab-actions">
           <PickButton :active="picking(det.id)" label="Add faces in 3D" @click="togglePick(det.id)" />
           <span v-if="info(det.id)" class="muted small">
@@ -83,13 +95,16 @@
     <div class="tab-actions">
       <button class="btn small" @click="add('exit')"><Plus :size="14" /> Add exit surface</button>
       <button class="btn small" @click="add('receiver')"><Plus :size="14" /> Add receiver</button>
+      <button v-if="dets.length > 1" class="btn small" :title="allOpen ? 'Hide the face lists of all surfaces' : 'Show the face lists of all surfaces'" @click="setAll(!allOpen)">
+        <ChevronsUpDown :size="14" /> {{ allOpen ? "Collapse all" : "Expand all" }}
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { FlipHorizontal2, FlipVertical2, Info, Plus, Trash2, X } from "lucide-vue-next";
+import { computed, reactive } from "vue";
+import { ChevronRight, ChevronsUpDown, FlipHorizontal2, FlipVertical2, Info, Plus, Trash2, X } from "lucide-vue-next";
 import { useWorkspace } from "../composables/useWorkspace";
 import CheckWarnings from "./CheckWarnings.vue";
 import PickButton from "./PickButton.vue";
@@ -104,6 +119,19 @@ const resolutions = (cur: number) => (RESOLUTIONS.includes(cur) || !cur ? RESOLU
 const info = (id: string) => ws.check.value?.detectors.find((d) => d.id === id);
 const picking = (id: string) => ws.pick.value?.kind === "detector" && ws.pick.value.detectorId === id;
 const togglePick = (id: string) => (ws.pick.value = picking(id) ? null : { kind: "detector", detectorId: id });
+
+// the face list of an exit surface folds away; a short list (up to 3 faces) starts open, and the surface being picked into is always open
+const open = reactive<Record<string, boolean>>({});
+const isOpen = (d: DetectorDef) => picking(d.id) || (open[d.id] ?? d.faces.length <= 3);
+/** One line for a folded list: the first face, and how many more. */
+const summary = (d: DetectorDef) => {
+  const f = d.faces[0];
+  const first = `${f.part} · ${f.face}`;
+  return d.faces.length > 1 ? `${first} +${d.faces.length - 1}` : first;
+};
+const toggleOpen = (d: DetectorDef) => (open[d.id] = !isOpen(d));
+const allOpen = computed(() => dets.value.filter((d) => d.faces.length).every((d) => isOpen(d)));
+const setAll = (on: boolean) => dets.value.forEach((d) => (open[d.id] = on));
 
 function add(type: "exit" | "receiver" = "exit") {
   ws.mutate((s) => {
