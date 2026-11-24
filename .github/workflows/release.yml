@@ -13,9 +13,9 @@ on:
         required: true
         type: string
       with_render:
-        description: "Bundle Mitsuba 3 so Render picture works (adds several hundred MB)"
+        description: "Bundle Mitsuba 3 so Render picture and the photoreal view work (adds several hundred MB)"
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -66,7 +66,8 @@ jobs:
         shell: pwsh
         run: |
           $p = @{ Version = "${{ steps.ver.outputs.version }}" }
-          if ("${{ inputs.with_render }}" -eq "true") { $p.WithRender = $true }
+          # Mitsuba is bundled by default (tag pushes have no inputs); only an explicit "false" from a manual run skips it.
+          if ("${{ inputs.with_render }}" -ne "false") { $p.WithRender = $true }
           .\packaging\build.ps1 @p
 
       - name: Check the installer

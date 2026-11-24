@@ -45,14 +45,14 @@
       <p v-if="error" class="notice warn"><AlertTriangle :size="15" /> {{ error }}</p>
 
       <section v-if="projects.length" class="recent">
-        <h3>Projects</h3>
+        <h3>Projects <span v-if="totalBytes" class="muted small">· {{ fmtBytes(totalBytes) }} in total</span></h3>
         <ul>
           <li v-for="p in projects" :key="p.id" class="model-row" @click="open(p)">
             <FileBox :size="22" class="model-icon" />
             <div class="model-info">
               <div class="model-name">{{ p.name }}</div>
               <div class="muted small">
-                {{ p.designs.length > 1 ? `${p.designs.length} designs · ` : "" }}{{ p.variants.length > 1 ? `${p.variants.length} variants · ` : "" }}{{ p.revisions.length }} revision{{ p.revisions.length === 1 ? "" : "s" }} · opened {{ fmtAgo(p.lastOpened) }}
+                {{ p.designs.length > 1 ? `${p.designs.length} designs · ` : "" }}{{ p.variants.length > 1 ? `${p.variants.length} variants · ` : "" }}{{ p.revisions.length }} revision{{ p.revisions.length === 1 ? "" : "s" }}{{ p.sizeBytes != null ? ` · ${fmtBytes(p.sizeBytes)}` : "" }} · opened {{ fmtAgo(p.lastOpened) }}
               </div>
               <div v-if="p.latest && active(p.latest)" class="progress thin">
                 <div class="progress-bar" :style="{ width: Math.round(p.latest.progress.fraction * 100) + '%' }" />
@@ -142,7 +142,7 @@ import {
   updateInstalling,
   updateProgress,
 } from "../composables/useUpdater";
-import { fmtAgo } from "../utils/format";
+import { fmtAgo, fmtBytes } from "../utils/format";
 
 const router = useRouter();
 const projects = ref<Project[]>([]);
@@ -188,6 +188,7 @@ watch(placement, (pl) => {
 
 const statusText: Record<string, string> = { queued: "Queued", running: "Processing", ready: "Ready", failed: "Failed", cancelled: "Cancelled" };
 const active = (m: RevisionMeta) => m.status === "queued" || m.status === "running";
+const totalBytes = computed(() => projects.value.reduce((sum, p) => sum + (p.sizeBytes ?? 0), 0));
 const anyActive = computed(() => projects.value.some((p) => p.latest && active(p.latest)));
 
 let timer: number | undefined;

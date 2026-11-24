@@ -132,7 +132,7 @@ def _project_payload(project: dict, with_revisions: bool = False) -> dict:
 
 @app.get("/api/projects")
 def list_projects() -> list[dict]:
-    return [_project_payload(p) for p in store.list_projects()]
+    return [{**_project_payload(p), "sizeBytes": store.project_size(p)} for p in store.list_projects()]
 
 
 @app.get("/api/projects/{pid}")

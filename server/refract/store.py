@@ -673,6 +673,50 @@ def delete_project(pid: str) -> None:
     shutil.rmtree(project_dir(pid), ignore_errors=True)
 
 
+_SIZE_TTL = 30.0  # seconds; the home screen polls every few seconds and a walk of big run folders is not free
+_size_cache: dict[tuple[str, str], tuple[float, int]] = {}
+_size_lock = threading.Lock()
+
+
+def _tree_size(path: Path) -> int:
+    total = 0
+    stack = [str(path)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:  # a file vanished while it was being counted
+                        continue
+        except OSError:
+            continue
+    return total
+
+
+def project_size(project: dict) -> int:
+    """Bytes on disk used by a project: its own folder plus the folder of each of its revisions (what ``delete_project`` removes).
+
+    The result is cached for a short while per project.
+    """
+    pid = project["id"]
+    key = (str(data_dir()), pid)
+    now = time.monotonic()
+    with _size_lock:
+        hit = _size_cache.get(key)
+        if hit is not None and now - hit[0] < _SIZE_TTL:
+            return hit[1]
+    total = _tree_size(project_dir(pid))
+    for rid in project.get("revisions", []):
+        total += _tree_size(rev_dir(rid))
+    with _size_lock:
+        _size_cache[key] = (now, total)
+    return total
+
+
 def _setup_variant_id(pid: str, vid: str | None) -> str:
     project = load_project(pid)
     variant = find_variant(project, vid) if project else None

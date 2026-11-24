@@ -61,6 +61,8 @@ export interface Project {
   variants: Variant[];
   latest: RevisionMeta | null;
   revisionList?: RevisionMeta[];
+  /** Disk space used by the project (only in the project list). */
+  sizeBytes?: number;
 }
 
 // ── optical parts ───────────────────────────────────────────────────────────

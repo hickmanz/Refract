@@ -118,6 +118,22 @@ def test_variant_crud_and_independent_setups(client):
         client.delete(f"/api/projects/{pid}")
 
 
+def test_project_list_reports_disk_size(client):
+    pid = client.post("/api/projects", json={"name": "Sized"}).json()["id"]
+    try:
+        vid = client.get(f"/api/projects/{pid}").json()["variants"][0]["id"]
+        rid = _fake_rev(pid, vid, time.time())
+        (store.rev_dir(rid) / "source.step").write_bytes(b"x" * 5000)
+        run = store.run_dir(rid, store.new_id())
+        run.mkdir(parents=True)
+        (run / "tally.npz").write_bytes(b"y" * 7000)
+        store._size_cache.clear()  # the size is cached for a short while
+        listed = next(p for p in client.get("/api/projects").json() if p["id"] == pid)
+        assert listed["sizeBytes"] >= 12000
+    finally:
+        client.delete(f"/api/projects/{pid}")
+
+
 def test_designs_group_variants(client):
     pid = client.post("/api/projects", json={"name": "Designs"}).json()["id"]
     try:
